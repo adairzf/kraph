@@ -1,160 +1,403 @@
 <script setup lang="ts">
-import { ref } from "vue";
-import { invoke } from "@tauri-apps/api/core";
+import { ref } from 'vue'
+import MemoryList from './components/MemoryList.vue'
+import InputPanel from './components/InputPanel.vue'
+import EditorPanel from './components/EditorPanel.vue'
+import GraphPanel from './components/GraphPanel.vue'
+import Timeline from './components/Timeline.vue'
+import CharacterCard from './components/CharacterCard.vue'
+import SearchPanel from './components/SearchPanel.vue'
+import { useGraphStore } from './stores/graphStore'
+import { downloadOllamaInstaller, checkOllama, openMemoriesFolder, cleanupDatabase, clearAllData } from './utils/tauriApi'
+import { onMounted, onUnmounted } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 
-const greetMsg = ref("");
-const name = ref("");
+const editorContent = ref('')
+const centerView = ref<'edit' | 'timeline' | 'qa'>('qa')
+const graphStore = useGraphStore()
+const searchName = ref('')
+const ollamaDownloading = ref(false)
+const ollamaMessage = ref('')
+const ollamaStatus = ref<string>('')
+const ollamaProgress = ref('')
+let ollamaProgressTimer: number | null = null
 
-async function greet() {
-  // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-  greetMsg.value = await invoke("greet", { name: name.value });
+onMounted(async () => {
+  const [running, msg] = await checkOllama()
+  ollamaStatus.value = running ? '✓ Ollama 已运行' : msg
+})
+
+function onSearchEntity() {
+  graphStore.setSearchEntity(searchName.value.trim() || null)
 }
+
+async function onOpenMemoriesFolder() {
+  try {
+    await openMemoriesFolder()
+  } catch (e) {
+    ollamaMessage.value = e instanceof Error ? e.message : String(e)
+  }
+}
+
+async function onCleanupDatabase() {
+  try {
+    const msg = await cleanupDatabase()
+    await graphStore.fetchGraph()
+    ElMessage.success(msg)
+  } catch (e) {
+    ElMessage.error('清理失败: ' + (e instanceof Error ? e.message : String(e)))
+  }
+}
+
+async function onClearAllData() {
+  try {
+    await ElMessageBox.confirm(
+      '此操作将永久删除所有记忆、实体、关系数据，是否继续？',
+      '⚠️ 危险操作',
+      {
+        confirmButtonText: '确定清空',
+        cancelButtonText: '取消',
+        type: 'warning',
+        confirmButtonClass: 'el-button--danger'
+      }
+    )
+    
+    const msg = await clearAllData()
+    await graphStore.fetchGraph()
+    ElMessage.success(msg)
+    
+    // 刷新页面
+    window.location.reload()
+  } catch (e) {
+    if (e !== 'cancel') {
+      ElMessage.error('清空失败: ' + (e instanceof Error ? e.message : String(e)))
+    }
+  }
+}
+
+async function onDownloadOllama() {
+  ollamaDownloading.value = true
+  ollamaMessage.value = ''
+  ollamaProgress.value = '正在准备下载安装包，请稍候'
+  let dot = 0
+  ollamaProgressTimer = window.setInterval(() => {
+    dot = (dot + 1) % 4
+    ollamaProgress.value = `正在下载并打开安装器${'.'.repeat(dot)}`
+  }, 500)
+  try {
+    const msg = await downloadOllamaInstaller()
+    ollamaMessage.value = msg
+    setTimeout(async () => {
+      const [running, status] = await checkOllama()
+      ollamaStatus.value = running ? '✓ Ollama 已运行' : status
+    }, 2000)
+  } catch (e) {
+    ollamaMessage.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    if (ollamaProgressTimer) {
+      window.clearInterval(ollamaProgressTimer)
+      ollamaProgressTimer = null
+    }
+    ollamaProgress.value = ''
+    ollamaDownloading.value = false
+  }
+}
+
+onUnmounted(() => {
+  if (ollamaProgressTimer) {
+    window.clearInterval(ollamaProgressTimer)
+    ollamaProgressTimer = null
+  }
+})
 </script>
 
 <template>
-  <main class="container">
-    <h1>Welcome to Tauri + Vue</h1>
-
-    <div class="row">
-      <a href="https://vite.dev" target="_blank">
-        <img src="/vite.svg" class="logo vite" alt="Vite logo" />
-      </a>
-      <a href="https://tauri.app" target="_blank">
-        <img src="/tauri.svg" class="logo tauri" alt="Tauri logo" />
-      </a>
-      <a href="https://vuejs.org/" target="_blank">
-        <img src="./assets/vue.svg" class="logo vue" alt="Vue logo" />
-      </a>
+  <div class="app">
+    <header class="header">
+      <h1 class="title">记忆 · 知识图谱</h1>
+      <div class="header-actions">
+        <span v-if="ollamaStatus" class="ollama-status">{{ ollamaStatus }}</span>
+        <button
+          type="button"
+          class="btn-cleanup"
+          @click="onCleanupDatabase"
+          title="清理数据库脏数据"
+        >
+          🧹 清理数据库
+        </button>
+        <button
+          type="button"
+          class="btn-clear-all"
+          @click="onClearAllData"
+          title="清空所有数据（危险操作）"
+        >
+          ⚠️ 清空数据
+        </button>
+        <button
+          type="button"
+          class="btn-open-memories"
+          @click="onOpenMemoriesFolder"
+        >
+          打开记忆文件夹
+        </button>
+        <button
+          type="button"
+          class="btn-download-ollama"
+          :disabled="ollamaDownloading"
+          @click="onDownloadOllama"
+        >
+          {{ ollamaDownloading ? '正在下载…' : '下载并安装 Ollama' }}
+        </button>
+        <p v-if="ollamaProgress" class="header-progress">{{ ollamaProgress }}</p>
+        <p v-if="ollamaMessage" class="header-message">{{ ollamaMessage }}</p>
+      </div>
+    </header>
+    <div class="main">
+      <aside class="sidebar left">
+        <MemoryList />
+      </aside>
+      <section class="center">
+        <InputPanel v-model="editorContent" />
+        <div class="center-tabs">
+        <button
+            type="button"
+            class="tab"
+            :class="{ active: centerView === 'qa' }"
+            @click="centerView = 'qa'"
+        >
+            问答
+        </button>
+          <button
+            type="button"
+            class="tab"
+            :class="{ active: centerView === 'edit' }"
+            @click="centerView = 'edit'"
+          >
+            编辑
+          </button>
+          <!-- <button
+            type="button"
+            class="tab"
+            :class="{ active: centerView === 'timeline' }"
+            @click="centerView = 'timeline'"
+          >
+            时间轴
+          </button> -->
+          
+        </div>
+        <div class="center-content">
+          <EditorPanel v-show="centerView === 'edit'" />
+          <Timeline v-show="centerView === 'timeline'" />
+          <SearchPanel v-show="centerView === 'qa'" />
+        </div>
+      </section>
+      <aside class="sidebar right">
+        <div class="right-search">
+          <input
+            v-model="searchName"
+            type="text"
+            placeholder="搜索人物/实体…"
+            class="search-input"
+            @keyup.enter="onSearchEntity"
+          />
+          <button type="button" class="btn-search" @click="onSearchEntity">搜索</button>
+        </div>
+        <GraphPanel />
+        <CharacterCard
+          :entity-id="graphStore.selectedEntityId"
+          :entity-name="graphStore.searchEntityName"
+        />
+      </aside>
     </div>
-    <p>Click on the Tauri, Vite, and Vue logos to learn more.</p>
-
-    <form class="row" @submit.prevent="greet">
-      <input id="greet-input" v-model="name" placeholder="Enter a name..." />
-      <button type="submit">Greet</button>
-    </form>
-    <p>{{ greetMsg }}</p>
-  </main>
+  </div>
 </template>
 
-<style scoped>
-.logo.vite:hover {
-  filter: drop-shadow(0 0 2em #747bff);
-}
-
-.logo.vue:hover {
-  filter: drop-shadow(0 0 2em #249b73);
-}
-
-</style>
 <style>
 :root {
   font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
   font-size: 16px;
   line-height: 24px;
   font-weight: 400;
-
   color: #0f0f0f;
   background-color: #f6f6f6;
-
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  -webkit-text-size-adjust: 100%;
 }
+* {
+  box-sizing: border-box;
+}
+</style>
 
-.container {
-  margin: 0;
-  padding-top: 10vh;
+<style scoped>
+.app {
+  height: 100vh;
   display: flex;
   flex-direction: column;
-  justify-content: center;
-  text-align: center;
+  overflow: hidden;
 }
-
-.logo {
-  height: 6em;
-  padding: 1.5em;
-  will-change: filter;
-  transition: 0.75s;
-}
-
-.logo.tauri:hover {
-  filter: drop-shadow(0 0 2em #24c8db);
-}
-
-.row {
+.header {
+  flex-shrink: 0;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+  background: #fff;
   display: flex;
-  justify-content: center;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem;
 }
-
-a {
-  font-weight: 500;
-  color: #646cff;
-  text-decoration: inherit;
+.title {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 600;
 }
-
-a:hover {
-  color: #535bf2;
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
 }
-
-h1 {
-  text-align: center;
+.ollama-status {
+  font-size: 0.8125rem;
+  padding: 0.3rem 0.6rem;
+  border-radius: 4px;
+  background: #f0f0f0;
+  color: #666;
 }
-
-input,
-button {
-  border-radius: 8px;
-  border: 1px solid transparent;
-  padding: 0.6em 1.2em;
-  font-size: 1em;
-  font-weight: 500;
-  font-family: inherit;
-  color: #0f0f0f;
-  background-color: #ffffff;
-  transition: border-color 0.25s;
-  box-shadow: 0 2px 2px rgba(0, 0, 0, 0.2);
-}
-
-button {
+.btn-download-ollama {
+  padding: 0.4rem 0.75rem;
+  font-size: 0.8125rem;
+  border: 1px solid #24c8db;
+  background: #fff;
+  color: #24c8db;
+  border-radius: 6px;
   cursor: pointer;
 }
-
-button:hover {
-  border-color: #396cd8;
+.btn-open-memories {
+  padding: 0.4rem 0.75rem;
+  font-size: 0.8125rem;
+  border: 1px solid #aaa;
+  background: #fff;
+  color: #333;
+  border-radius: 6px;
+  cursor: pointer;
 }
-button:active {
-  border-color: #396cd8;
-  background-color: #e8e8e8;
+.btn-open-memories:hover {
+  background: #f6f6f6;
 }
-
-input,
-button {
-  outline: none;
+.btn-cleanup {
+  padding: 0.4rem 0.75rem;
+  font-size: 0.8125rem;
+  border: 1px solid #ff9800;
+  background: #fff;
+  color: #ff9800;
+  border-radius: 6px;
+  cursor: pointer;
 }
-
-#greet-input {
-  margin-right: 5px;
+.btn-cleanup:hover {
+  background: #fff3e0;
 }
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    color: #f6f6f6;
-    background-color: #2f2f2f;
-  }
-
-  a:hover {
-    color: #24c8db;
-  }
-
-  input,
-  button {
-    color: #ffffff;
-    background-color: #0f0f0f98;
-  }
-  button:active {
-    background-color: #0f0f0f69;
-  }
+.btn-clear-all {
+  padding: 0.4rem 0.75rem;
+  font-size: 0.8125rem;
+  border: 1px solid #f44336;
+  background: #fff;
+  color: #f44336;
+  border-radius: 6px;
+  cursor: pointer;
 }
-
+.btn-clear-all:hover {
+  background: #ffebee;
+}
+.btn-download-ollama:hover:not(:disabled) {
+  background: #e8f9fb;
+}
+.btn-download-ollama:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+.header-message {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: #666;
+  max-width: 320px;
+}
+.header-progress {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: #0a7f8c;
+}
+.main {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+.sidebar {
+  flex: 0 0 260px;
+  padding: 1rem;
+  background: #fff;
+  border-right: 1px solid rgba(0, 0, 0, 0.08);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.sidebar.right {
+  border-right: none;
+  border-left: 1px solid rgba(0, 0, 0, 0.08);
+  flex: 0 0 320px;
+}
+.right-search {
+  display: flex;
+  gap: 0.35rem;
+  margin-bottom: 0.5rem;
+}
+.search-input {
+  flex: 1;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 0.875rem;
+}
+.btn-search {
+  padding: 0.35rem 0.6rem;
+  border: 1px solid #24c8db;
+  background: #24c8db;
+  color: #fff;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.875rem;
+}
+.center {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: #fafafa;
+}
+.center-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 0.5rem 0.75rem 0;
+}
+.center-tabs .tab {
+  padding: 0.35rem 0.75rem;
+  border: 1px solid #ddd;
+  background: #f9f9f9;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.875rem;
+}
+.center-tabs .tab.active {
+  background: #fff;
+  border-color: #24c8db;
+  color: #24c8db;
+}
+.center-content {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 0.75rem 0.75rem;
+}
 </style>
