@@ -7,19 +7,22 @@ import GraphPanel from './components/GraphPanel.vue'
 import Timeline from './components/Timeline.vue'
 import CharacterCard from './components/CharacterCard.vue'
 import SearchPanel from './components/SearchPanel.vue'
+import ModelSettings from './components/ModelSettings.vue'
+import ModelIndicator from './components/ModelIndicator.vue'
 import { useGraphStore } from './stores/graphStore'
 import { downloadOllamaInstaller, checkOllama, openMemoriesFolder, cleanupDatabase, clearAllData } from './utils/tauriApi'
 import { onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 const editorContent = ref('')
-const centerView = ref<'edit' | 'timeline' | 'qa'>('qa')
+const centerView = ref<'edit' | 'timeline' | 'qa' | 'settings'>('qa')
 const graphStore = useGraphStore()
 const searchName = ref('')
 const ollamaDownloading = ref(false)
 const ollamaMessage = ref('')
 const ollamaStatus = ref<string>('')
 const ollamaProgress = ref('')
+const leftSidebarCollapsed = ref(false)
 let ollamaProgressTimer: number | null = null
 
 onMounted(async () => {
@@ -116,6 +119,7 @@ onUnmounted(() => {
     <header class="header">
       <h1 class="title">记忆 · 知识图谱</h1>
       <div class="header-actions">
+        <ModelIndicator />
         <span v-if="ollamaStatus" class="ollama-status">{{ ollamaStatus }}</span>
         <button
           type="button"
@@ -153,10 +157,19 @@ onUnmounted(() => {
       </div>
     </header>
     <div class="main">
-      <aside class="sidebar left">
-        <MemoryList />
+      <aside class="sidebar left" :class="{ collapsed: leftSidebarCollapsed }">
+        <button 
+          class="collapse-btn" 
+          @click="leftSidebarCollapsed = !leftSidebarCollapsed"
+          :title="leftSidebarCollapsed ? '展开记忆列表' : '收起记忆列表'"
+        >
+          {{ leftSidebarCollapsed ? '→' : '←' }}
+        </button>
+        <div v-show="!leftSidebarCollapsed" class="sidebar-content">
+          <MemoryList />
+        </div>
       </aside>
-      <section class="center">
+      <section class="center" :class="{ 'left-collapsed': leftSidebarCollapsed }">
         <InputPanel v-model="editorContent" />
         <div class="center-tabs">
         <button
@@ -175,6 +188,14 @@ onUnmounted(() => {
           >
             编辑
           </button>
+          <button
+            type="button"
+            class="tab"
+            :class="{ active: centerView === 'settings' }"
+            @click="centerView = 'settings'"
+          >
+            ⚙️ 设置
+          </button>
           <!-- <button
             type="button"
             class="tab"
@@ -189,6 +210,7 @@ onUnmounted(() => {
           <EditorPanel v-show="centerView === 'edit'" />
           <Timeline v-show="centerView === 'timeline'" />
           <SearchPanel v-show="centerView === 'qa'" />
+          <ModelSettings v-show="centerView === 'settings'" />
         </div>
       </section>
       <aside class="sidebar right">
@@ -202,11 +224,15 @@ onUnmounted(() => {
           />
           <button type="button" class="btn-search" @click="onSearchEntity">搜索</button>
         </div>
-        <GraphPanel />
-        <CharacterCard
-          :entity-id="graphStore.selectedEntityId"
-          :entity-name="graphStore.searchEntityName"
-        />
+        <div class="graph-container">
+          <GraphPanel />
+        </div>
+        <div class="character-card-container">
+          <CharacterCard
+            :entity-id="graphStore.selectedEntityId"
+            :entity-name="graphStore.searchEntityName"
+          />
+        </div>
       </aside>
     </div>
   </div>
@@ -342,16 +368,64 @@ onUnmounted(() => {
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  position: relative;
+  transition: flex-basis 0.3s ease, padding 0.3s ease;
+}
+.sidebar.collapsed {
+  flex: 0 0 40px;
+  padding: 1rem 0.5rem;
+}
+.sidebar-content {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.collapse-btn {
+  position: absolute;
+  top: 1rem;
+  right: 0.5rem;
+  width: 24px;
+  height: 24px;
+  border: 1px solid #ddd;
+  background: #fff;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+  transition: all 0.2s;
+}
+.collapse-btn:hover {
+  background: #f5f5f5;
+  border-color: #24c8db;
+  color: #24c8db;
 }
 .sidebar.right {
   border-right: none;
   border-left: 1px solid rgba(0, 0, 0, 0.08);
-  flex: 0 0 320px;
+  flex: 0 0 50%;
+  max-width: 800px;
 }
 .right-search {
   display: flex;
   gap: 0.35rem;
   margin-bottom: 0.5rem;
+  flex-shrink: 0;
+}
+.graph-container {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  margin-bottom: 0.5rem;
+}
+.character-card-container {
+  flex-shrink: 0;
+  max-height: 40%;
+  overflow-y: auto;
 }
 .search-input {
   flex: 1;
@@ -375,6 +449,10 @@ onUnmounted(() => {
   flex-direction: column;
   min-width: 0;
   background: #fafafa;
+  transition: margin-left 0.3s ease;
+}
+.center.left-collapsed {
+  /* 当左侧收起时，可以有更多空间 */
 }
 .center-tabs {
   display: flex;

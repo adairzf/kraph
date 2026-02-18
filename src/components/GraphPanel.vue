@@ -35,9 +35,9 @@ const chartOption = computed(() => {
   const nodes = g.nodes.map((n: { id: string; name: string; type: string }) => ({
     id: n.id,
     name: n.name,
-    symbolSize: 28,
+    symbolSize: 35,
     itemStyle: { color: nodeColors[n.type] ?? '#999' },
-    label: { show: true },
+    label: { show: true, fontSize: 12 },
   }))
   const links = g.links.map((l: { source: string; target: string; relation: string; strength: number }) => ({
     source: l.source,
@@ -46,7 +46,7 @@ const chartOption = computed(() => {
     lineStyle: { width: Math.max(1, Math.min(l.strength, 4)) },
   }))
   return {
-    title: { text: '知识图谱', left: 'center', top: 8 },
+    title: { text: '知识图谱', left: 'center', top: 8, textStyle: { fontSize: 16 } },
     tooltip: {
       formatter: (params: unknown) => {
         const p = params as { dataType?: string; data?: { name?: string; value?: string } }
@@ -58,13 +58,20 @@ const chartOption = computed(() => {
         type: 'graph',
         layout: 'force',
         roam: true,
-        label: { position: 'right' },
-        edgeSymbol: ['none', 'none'],
+        label: { position: 'right', fontSize: 12 },
+        edgeSymbol: ['none', 'arrow'],
+        edgeSymbolSize: 8,
+        edgeLabel: {
+          show: true,
+          fontSize: 10,
+          formatter: '{c}',
+        },
         data: nodes,
         links,
         force: {
-          repulsion: 200,
-          edgeLength: 80,
+          repulsion: 300,
+          edgeLength: 120,
+          gravity: 0.1,
         },
         emphasis: { focus: 'adjacency' },
       },

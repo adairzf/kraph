@@ -8,41 +8,124 @@ use serde::{Deserialize, Serialize};
 use std::process::Stdio;
 use std::time::Duration;
 
-const ENTITY_EXTRACT_PROMPT: &str = r#"你是一个专业的实体提取助手，请从以下文本中提取：
-1. 人物(Person)：姓名、身份、特征
-2. 时间(Time)：具体时间或时间段
-3. 地点(Location)：具体地址或场所
-4. 事件(Event)：发生了什么
+pub const ENTITY_EXTRACT_PROMPT: &str = r#"你是一个专业的命名实体识别(NER)助手。请从文本中**尽可能完整地提取**以下类型的实体和关系：
 
-只输出一个JSON，不要其他解释。格式如下：
-{"entities":[{"type":"Person","name":"李明","attributes":{"identity":"同学"}},{"type":"Location","name":"阿里巴巴"}],"relations":[{"from":"李明","to":"阿里巴巴","relation":"在...上班"}]}
+**实体类型**：
+1. Person（人物）：人名、角色名
+2. Organization（组织/机构）：公司、军队、部门、组织、机构、项目名称、计划名称（包括括号中的缩写和全称）
+3. Location（地点）：地点、建筑、太空站、基地、星球、飞船等
+4. Time（时间）：日期、时间点、年龄、纪元
+5. Event（事件）：战役、任务、行动、计划、项目
 
-文本：
-"#;
+**关键提取规则**：
+- **括号内容必须提取**：如"深空防卫军(DSOF)"要提取为Organization，括号里的缩写也是重要信息
+- **缩写也是实体**：如ICMA、HGA、SED、DSOF等都是Organization类型的实体
+- **所有组织机构都要提取**：包括政府部门、军队、大学、实验室、研究院等
+- **地点包括飞船和基地**：如"月球基地"、"赤霄舰"都是Location
+- **时间包括多种格式**：如"地球历2067.6.16"、"UCT纪元7年"、"30岁"都是Time
+- attributes存储该实体的特征（如身份、军衔、年龄、性别等），不要把特征创建为单独的实体
+- 提取所有关系：人物与组织、人物与地点、人物与时间、组织与地点等
 
-const KNOWLEDGE_FUSION_PROMPT: &str = r#"你是一个知识图谱管理专家。我会给你提供历史记忆和新记忆，你需要：
+**示例**（这只是格式示例，请根据实际文本完整提取）：
+文本：陈海，男性，33岁，出生于月球基地（隶属ICMA管辖），中校军衔。毕业于科技与教育部（SED）直属深空科技大学，加入深空防卫军（DSOF）。
 
-1. **识别实体合并**：判断不同名称是否指向同一个实体（如"李明"和"我二哥"是同一人）
-2. **推导关系传递**：从已有关系推导新关系（如：李明是我二哥 + 我二哥在字节上班 => 李明在字节上班）
-3. **提取完整知识**：输出所有实体、别名和关系（包括直接关系和推导关系）
-
-**重要规则**：
-- 如果某个实体A通过"是"关系指向另一个实体B，则A和B是同一实体，B应作为A的别名
-- 同一实体的不同称呼要识别出来（如"李明"、"我二哥"、"二哥"指同一人）
-- 从关系链中推导隐含关系（如A→B的同事, B→C的朋友 不能推导A→C，但A是B, B→C工作于 可推导A→C工作于）
-
-只输出JSON，格式如下：
+输出：
 {
   "entities": [
-    {"type": "Person", "name": "李明", "attributes": {"identity": "同事"}},
-    {"type": "Organization", "name": "字节"}
-  ],
-  "aliases": [
-    {"primary": "李明", "alias": "我二哥"},
-    {"primary": "李明", "alias": "二哥"}
+    {"type": "Person", "name": "陈海", "attributes": {"gender": "男性", "age": "33岁", "rank": "中校"}},
+    {"type": "Location", "name": "月球基地"},
+    {"type": "Organization", "name": "ICMA"},
+    {"type": "Organization", "name": "科技与教育部"},
+    {"type": "Organization", "name": "SED"},
+    {"type": "Organization", "name": "深空科技大学"},
+    {"type": "Organization", "name": "深空防卫军"},
+    {"type": "Organization", "name": "DSOF"}
   ],
   "relations": [
-    {"from": "李明", "to": "字节", "relation": "在...上班"}
+    {"from": "陈海", "to": "月球基地", "relation": "出生于"},
+    {"from": "月球基地", "to": "ICMA", "relation": "隶属于"},
+    {"from": "陈海", "to": "深空科技大学", "relation": "毕业于"},
+    {"from": "深空科技大学", "to": "SED", "relation": "隶属于"},
+    {"from": "陈海", "to": "深空防卫军", "relation": "加入"}
+  ]
+}
+
+现在请从以下文本中**完整提取所有实体和关系**：
+"#;
+
+pub const KNOWLEDGE_FUSION_PROMPT: &str = r#"你是一个知识图谱管理专家。我会提供历史记忆和新记忆，你需要进行深度知识融合和推理。
+
+**任务要求**：
+1. **完整提取所有实体**：从新记忆中提取所有Person、Organization、Location、Time、Event类型的实体
+2. **特别注意括号内容**：如"深空防卫军(DSOF)"中的DSOF也是Organization，要一起提取
+3. **提取所有缩写组织**：如ICMA、HGA、SED、DSOF、DSTL、ISRI等都是独立的Organization实体
+4. **识别实体合并**：判断不同名称是否指向同一实体（如"李明"和"我二哥"是同一人）
+5. **推导隐含关系**：从已有关系推导新关系
+6. **保留所有关系**：包括人物→组织、人物→地点、组织→地点、人物→时间、组织→组织等
+
+**实体类型**：
+- Person：人物姓名（attributes存储：identity身份、age年龄、rank军衔、gender性别等）
+- Organization：组织机构名（包括全称和缩写，如ICMA、深空防卫军、科技与教育部等）
+- Location：地点名（如月球基地、太空站、飞船、星球等）
+- Time：时间信息（如地球历2067.6.16、UCT纪元7年、年龄等）
+- Event：事件名（如战役、远征计划、测试项目等）
+
+**关系类型示例**：
+- 人物→组织：担任、工作于、加入、服役于、毕业于、指挥
+- 人物→人物：同事、上下级、队友、战友
+- 人物→地点：出生于、驻扎于、负责、来自
+- 组织→地点：位于、管辖、隶属于
+- 组织→组织：隶属于、直属于、管辖
+- 人物→事件：参与、指挥、经历
+- 人物→时间：出生于
+- 实体→实体：隶属于、管辖
+
+**重要规则**：
+- **括号中的缩写必须提取**：如"深空防卫军(DSOF)"要提取两个Organization："深空防卫军"和"DSOF"，并建立"DSOF"作为"深空防卫军"的别名
+- **所有组织都要提取**：无论是全称还是缩写，都是独立的Organization实体
+- 如果实体A通过"是"/"又称"/"即"等关系指向实体B，则A和B是同一实体，应创建别名关系
+- 从关系链推导隐含关系（如A是B, B工作于C => A工作于C）
+- 属性信息放在attributes中，不要创建成单独的实体
+- **不要遗漏任何组织、地点、时间实体**
+
+**输出格式**：只输出JSON，示例：
+{
+  "entities": [
+    {"type": "Person", "name": "陈海", "attributes": {"identity": "副舰长", "rank": "中校", "age": "33岁", "gender": "男性"}},
+    {"type": "Organization", "name": "ICMA"},
+    {"type": "Organization", "name": "星际殖民与移民总局"},
+    {"type": "Organization", "name": "HGA"},
+    {"type": "Organization", "name": "卫生健康与基因管理局"},
+    {"type": "Organization", "name": "SED"},
+    {"type": "Organization", "name": "科技与教育部"},
+    {"type": "Organization", "name": "深空科技大学"},
+    {"type": "Organization", "name": "深空防卫军"},
+    {"type": "Organization", "name": "DSOF"},
+    {"type": "Organization", "name": "深空科技实验室"},
+    {"type": "Organization", "name": "DSTL"},
+    {"type": "Organization", "name": "星际战略研究院"},
+    {"type": "Organization", "name": "ISRI"},
+    {"type": "Location", "name": "月球基地"},
+    {"type": "Location", "name": "赤霄舰"},
+    {"type": "Time", "name": "地球历2067.6.16"},
+    {"type": "Time", "name": "UCT纪元7年6月16日"},
+    {"type": "Event", "name": "赤霄舰远征计划"}
+  ],
+  "aliases": [
+    {"primary": "星际殖民与移民总局", "alias": "ICMA"},
+    {"primary": "卫生健康与基因管理局", "alias": "HGA"},
+    {"primary": "科技与教育部", "alias": "SED"},
+    {"primary": "深空防卫军", "alias": "DSOF"},
+    {"primary": "深空科技实验室", "alias": "DSTL"},
+    {"primary": "星际战略研究院", "alias": "ISRI"}
+  ],
+  "relations": [
+    {"from": "陈海", "to": "月球基地", "relation": "出生于"},
+    {"from": "月球基地", "to": "ICMA", "relation": "隶属于"},
+    {"from": "陈海", "to": "深空科技大学", "relation": "毕业于"},
+    {"from": "深空科技大学", "to": "SED", "relation": "直属于"},
+    {"from": "陈海", "to": "深空防卫军", "relation": "加入"},
+    {"from": "陈海", "to": "赤霄舰远征计划", "relation": "参与"}
   ]
 }
 
@@ -312,7 +395,7 @@ pub fn call_ollama_extract_blocking(base_url: &str, model: &str, text: &str) -> 
         "model": model,
         "prompt": prompt,
         "stream": false,
-        "options": { "temperature": 0.3, "num_predict": 2048 }
+        "options": { "temperature": 0.2, "num_predict": 4096 }
     });
     let client = reqwest::blocking::Client::new();
     let res = client
@@ -366,7 +449,7 @@ pub fn call_ollama_knowledge_fusion(
         "model": model,
         "prompt": prompt,
         "stream": false,
-        "options": { "temperature": 0.2, "num_predict": 3072 }
+        "options": { "temperature": 0.2, "num_predict": 6144 }
     });
     
     let client = reqwest::blocking::Client::new();

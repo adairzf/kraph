@@ -1,5 +1,7 @@
 mod database;
 mod file_manager;
+mod model_client;
+mod model_config;
 mod ollama;
 mod ollama_installer;
 mod whisper;
@@ -13,10 +15,12 @@ use database::{
     DbState, Entity, GraphData, Memory,
 };
 use file_manager::{list_memory_files, read_memory, write_memory, MdRecord};
+use model_client::{call_model_extract, call_model_fusion, call_model_simple};
+use model_config::{ModelConfig, ModelProvider};
 use ollama::{
     call_ollama_extract_blocking, call_ollama_simple, call_ollama_knowledge_fusion,
     check_ollama_status, ensure_model_available, ensure_ollama_running, 
-    ExtractedData, FusedKnowledge,
+    ExtractedData, FusedKnowledge, ENTITY_EXTRACT_PROMPT, KNOWLEDGE_FUSION_PROMPT,
 };
 use ollama_installer::download_and_open_ollama_installer;
 use whisper::{setup_whisper as setup_whisper_runtime, transcribe_audio_with_whisper};
@@ -26,6 +30,7 @@ use std::sync::Mutex;
 use tauri::{Manager, State};
 
 pub struct AppDataDir(pub PathBuf);
+pub struct ModelConfigState(pub Mutex<ModelConfig>);
 
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -101,27 +106,59 @@ fn save_memory(
     tags: Option<Vec<String>>,
     db: State<DbState>,
     data_dir: State<AppDataDir>,
+    config_state: State<ModelConfigState>,
 ) -> Result<Memory, String> {
     let memories_dir = data_dir.0.join("memories");
     
+    // 获取当前配置
+    let config = config_state.0.lock().map_err(|e| e.to_string())?.clone();
+    
+    // 打印当前使用的模型配置
+    match &config.provider {
+        ModelProvider::Ollama { base_url, model_name, extract_model_name } => {
+            println!("📝 [保存记忆] 使用 Ollama 模型");
+            println!("   - 服务地址: {}", base_url);
+            println!("   - 问答模型: {}", model_name);
+            println!("   - 提取模型: {}", extract_model_name);
+        }
+        ModelProvider::DeepSeek { model_name, .. } => {
+            println!("📝 [保存记忆] 使用 DeepSeek API");
+            println!("   - 模型: {}", model_name);
+        }
+        ModelProvider::OpenAI { model_name, .. } => {
+            println!("📝 [保存记忆] 使用 OpenAI API");
+            println!("   - 模型: {}", model_name);
+        }
+    }
+    
     // 快速提取获取相关实体名（用于查找历史记忆）
+    println!("🔍 [步骤1] 开始快速实体提取...");
     let quick_extracted = if content.trim().len() > 5 {
-        let _ = ensure_ollama_running("http://localhost:11434");
-        let _ = ensure_model_available("http://localhost:11434", OLLAMA_MODEL_EXTRACT);
-        call_ollama_extract_blocking("http://localhost:11434", OLLAMA_MODEL_EXTRACT, &content)
-            .or_else(|_| {
-                let _ = ensure_model_available("http://localhost:11434", OLLAMA_MODEL);
-                call_ollama_extract_blocking("http://localhost:11434", OLLAMA_MODEL, &content)
+        // 如果是Ollama，先确保服务运行
+        if let ModelProvider::Ollama { base_url, extract_model_name, .. } = &config.provider {
+            let _ = ensure_ollama_running(base_url);
+            let _ = ensure_model_available(base_url, extract_model_name);
+        }
+        
+        call_model_extract(&config, ENTITY_EXTRACT_PROMPT, &content)
+            .map_err(|e| {
+                println!("❌ 快速提取失败: {}", e);
+                e
             })
             .ok()
     } else {
         None
     };
     
+    if let Some(ref ex) = quick_extracted {
+        println!("✅ 提取到 {} 个实体", ex.entities.len());
+    }
+    
     let mut guard = (&*db).0.lock().map_err(|e: std::sync::PoisonError<_>| e.to_string())?;
     let conn = guard.as_mut().ok_or("database not initialized")?;
     
     // 获取相关历史记忆（用于知识融合）
+    println!("🔍 [步骤2] 查找相关历史记忆...");
     let historical_memories = if let Some(ref ex) = quick_extracted {
         let mut all_memories = Vec::new();
         for entity in &ex.entities {
@@ -135,6 +172,7 @@ fn save_memory(
                 }
             }
         }
+        println!("✅ 找到 {} 条相关历史记忆", all_memories.len());
         all_memories
     } else {
         Vec::new()
@@ -142,28 +180,45 @@ fn save_memory(
     
     // 使用知识融合进行深度推理（如果有历史记忆）
     let fused = if !historical_memories.is_empty() && content.trim().len() > 5 {
-        let _ = ensure_model_available("http://localhost:11434", OLLAMA_MODEL);
-        call_ollama_knowledge_fusion(
-            "http://localhost:11434",
-            OLLAMA_MODEL,
+        println!("🧠 [步骤3] 开始知识融合推理...");
+        // 如果是Ollama，先确保模型可用
+        if let ModelProvider::Ollama { base_url, model_name, .. } = &config.provider {
+            let _ = ensure_model_available(base_url, model_name);
+        }
+        
+        call_model_fusion(
+            &config,
+            KNOWLEDGE_FUSION_PROMPT,
             &historical_memories,
             &content,
-        ).ok()
+        )
+        .map_err(|e| {
+            println!("⚠️  知识融合失败，回退到快速提取: {}", e);
+            e
+        })
+        .ok()
     } else {
+        println!("⏭️  [步骤3] 跳过知识融合（无历史记忆）");
         None
     };
     
     // 如果知识融合失败，回退到快速提取
     let (entities, relations, aliases) = if let Some(fused_data) = fused {
+        println!("✅ 知识融合完成: {} 个实体, {} 个关系, {} 个别名", 
+                 fused_data.entities.len(), fused_data.relations.len(), fused_data.aliases.len());
         (fused_data.entities, fused_data.relations, fused_data.aliases)
     } else if let Some(ex) = quick_extracted {
+        println!("✅ 使用快速提取结果: {} 个实体, {} 个关系", 
+                 ex.entities.len(), ex.relations.len());
         (ex.entities, ex.relations, Vec::new())
     } else {
+        println!("⚠️  未提取到任何实体");
         (Vec::new(), Vec::new(), Vec::new())
     };
     
     let entity_names: Vec<String> = entities.iter().map(|x| x.name.clone()).collect();
     
+    println!("💾 [步骤4] 保存到数据库...");
     // 保存到文件
     let path = write_memory(
         &memories_dir,
@@ -224,6 +279,7 @@ fn save_memory(
         }
     }
     
+    println!("✅ 记忆保存完成！");
     get_memory_by_id(conn, memory_id).map_err(|e| e.to_string())
 }
 
@@ -286,25 +342,48 @@ fn update_memory_content(
     content: String,
     tags: Option<Vec<String>>,
     db: State<DbState>,
+    config_state: State<ModelConfigState>,
 ) -> Result<Memory, String> {
     let tags_str = tags.map(|t| t.join(","));
+    
+    // 获取当前配置
+    let config = config_state.0.lock().map_err(|e| e.to_string())?.clone();
+    
+    // 打印当前使用的模型配置
+    println!("📝 [更新记忆 ID:{}]", memory_id);
+    match &config.provider {
+        ModelProvider::Ollama { base_url, model_name, extract_model_name } => {
+            println!("   使用 Ollama: {}", base_url);
+            println!("   提取模型: {}", extract_model_name);
+        }
+        ModelProvider::DeepSeek { model_name, .. } => {
+            println!("   使用 DeepSeek: {}", model_name);
+        }
+        ModelProvider::OpenAI { model_name, .. } => {
+            println!("   使用 OpenAI: {}", model_name);
+        }
+    }
     
     let mut guard = (&*db).0.lock().map_err(|e: std::sync::PoisonError<_>| e.to_string())?;
     let conn = guard.as_mut().ok_or("database not initialized")?;
     
     // 快速提取获取相关实体名
+    println!("🔍 开始实体提取...");
     let quick_extracted = if content.trim().len() > 5 {
-        let _ = ensure_ollama_running(OLLAMA_URL);
-        let _ = ensure_model_available(OLLAMA_URL, OLLAMA_MODEL_EXTRACT);
-        call_ollama_extract_blocking(OLLAMA_URL, OLLAMA_MODEL_EXTRACT, &content)
-            .or_else(|_| {
-                let _ = ensure_model_available(OLLAMA_URL, OLLAMA_MODEL);
-                call_ollama_extract_blocking(OLLAMA_URL, OLLAMA_MODEL, &content)
-            })
-            .ok()
+        // 如果是Ollama，先确保服务运行
+        if let ModelProvider::Ollama { base_url, extract_model_name, .. } = &config.provider {
+            let _ = ensure_ollama_running(base_url);
+            let _ = ensure_model_available(base_url, extract_model_name);
+        }
+        
+        call_model_extract(&config, ENTITY_EXTRACT_PROMPT, &content).ok()
     } else {
         None
     };
+    
+    if let Some(ref ex) = quick_extracted {
+        println!("✅ 提取到 {} 个实体", ex.entities.len());
+    }
     
     // 获取相关历史记忆（用于知识融合）
     let historical_memories = if let Some(ref ex) = quick_extracted {
@@ -328,10 +407,15 @@ fn update_memory_content(
     
     // 使用知识融合进行深度推理
     let fused = if !historical_memories.is_empty() && content.trim().len() > 5 {
-        let _ = ensure_model_available(OLLAMA_URL, OLLAMA_MODEL);
-        call_ollama_knowledge_fusion(
-            OLLAMA_URL,
-            OLLAMA_MODEL,
+        println!("🧠 进行知识融合...");
+        // 如果是Ollama，先确保模型可用
+        if let ModelProvider::Ollama { base_url, model_name, .. } = &config.provider {
+            let _ = ensure_model_available(base_url, model_name);
+        }
+        
+        call_model_fusion(
+            &config,
+            KNOWLEDGE_FUSION_PROMPT,
             &historical_memories,
             &content,
         ).ok()
@@ -341,8 +425,10 @@ fn update_memory_content(
     
     // 如果知识融合失败，回退到快速提取
     let (entities, relations, aliases) = if let Some(fused_data) = fused {
+        println!("✅ 知识融合完成");
         (fused_data.entities, fused_data.relations, fused_data.aliases)
     } else if let Some(ex) = quick_extracted {
+        println!("✅ 使用快速提取结果");
         (ex.entities, ex.relations, Vec::new())
     } else {
         (Vec::new(), Vec::new(), Vec::new())
@@ -416,6 +502,7 @@ fn update_memory_content(
         [],
     ).map_err(|e| e.to_string())?;
     
+    println!("✅ 记忆更新完成！");
     get_memory_by_id(conn, memory_id).map_err(|e| e.to_string())
 }
 
@@ -468,8 +555,8 @@ fn setup_whisper(data_dir: State<AppDataDir>) -> Result<String, String> {
 const OLLAMA_URL: &str = "http://localhost:11434";
 /// 问答、从问题中抽实体名等需要「生成」的任务，用稍大模型
 const OLLAMA_MODEL: &str = "qwen2.5:7b";
-/// 实体拆分（人物/时间/地点/事件）：任务简单，用小模型即可，省显存、更快
-const OLLAMA_MODEL_EXTRACT: &str = "qwen2.5:1.5b";
+/// 实体拆分（人物/时间/地点/事件）：复杂文本需要7b模型才能准确提取
+const OLLAMA_MODEL_EXTRACT: &str = "qwen2.5:7b";
 
 /// 基于实体的记忆检索与智能问答
 #[tauri::command]
@@ -542,6 +629,48 @@ fn download_ollama_installer() -> Result<String, String> {
     download_and_open_ollama_installer()
 }
 
+/// 获取当前模型配置
+#[tauri::command]
+fn get_model_config(config_state: State<ModelConfigState>) -> Result<ModelConfig, String> {
+    let guard = config_state.0.lock().map_err(|e| e.to_string())?;
+    Ok(guard.clone())
+}
+
+/// 更新模型配置
+#[tauri::command]
+fn update_model_config(
+    new_config: ModelConfig,
+    config_state: State<ModelConfigState>,
+    data_dir: State<AppDataDir>,
+) -> Result<(), String> {
+    let mut guard = config_state.0.lock().map_err(|e| e.to_string())?;
+    *guard = new_config.clone();
+    
+    let config_path = data_dir.0.join("model_config.json");
+    new_config.save_to_file(&config_path)?;
+    
+    Ok(())
+}
+
+/// 测试模型配置是否可用
+#[tauri::command]
+fn test_model_config(config: ModelConfig) -> Result<String, String> {
+    match &config.provider {
+        ModelProvider::Ollama { base_url, model_name, .. } => {
+            let (is_running, msg) = check_ollama_status(base_url);
+            if !is_running {
+                return Err(msg);
+            }
+            // 尝试简单调用
+            call_model_simple(&config, "你好，请回复：模型正常工作。")
+        }
+        ModelProvider::DeepSeek { .. } | ModelProvider::OpenAI { .. } => {
+            // 尝试简单调用
+            call_model_simple(&config, "你好，请回复：模型正常工作。")
+        }
+    }
+}
+
 /// 检测 Ollama 服务状态
 #[tauri::command]
 fn check_ollama() -> Result<(bool, String), String> {
@@ -558,7 +687,13 @@ pub fn run() {
             let db_path = db_dir.join("memoryai.db");
             let conn = init_db(&db_path).map_err(|e| e.to_string())?;
             app.manage(DbState(Mutex::new(Some(conn))));
-            app.manage(AppDataDir(app_data_dir));
+            app.manage(AppDataDir(app_data_dir.clone()));
+            
+            // 加载模型配置
+            let config_path = app_data_dir.join("model_config.json");
+            let model_config = ModelConfig::load_from_file(&config_path).unwrap_or_default();
+            app.manage(ModelConfigState(Mutex::new(model_config)));
+            
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -584,6 +719,9 @@ pub fn run() {
             answer_question,
             download_ollama_installer,
             check_ollama,
+            get_model_config,
+            update_model_config,
+            test_model_config,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

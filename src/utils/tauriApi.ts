@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core'
 import type { Memory, MdRecord } from '../types/memory'
 import type { Entity } from '../types/entity'
 import type { GraphData } from '../types/graph'
+import type { ModelConfig } from '../types/model-config'
 
 export interface ExtractedData {
   entities: { type: string; name: string; attributes?: unknown }[]
@@ -105,4 +106,19 @@ export async function downloadOllamaInstaller(): Promise<string> {
 /** 检测 Ollama 服务状态 */
 export async function checkOllama(): Promise<[boolean, string]> {
   return invoke('check_ollama')
+}
+
+/** 获取当前模型配置 */
+export async function getModelConfig(): Promise<ModelConfig> {
+  return invoke('get_model_config')
+}
+
+/** 更新模型配置 */
+export async function updateModelConfig(config: ModelConfig): Promise<void> {
+  return invoke('update_model_config', { newConfig: config })
+}
+
+/** 测试模型配置是否可用 */
+export async function testModelConfig(config: ModelConfig): Promise<string> {
+  return invoke('test_model_config', { config })
 }

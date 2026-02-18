@@ -72,6 +72,30 @@ watch(
 function preview(content: string) {
   return content.length > 80 ? content.slice(0, 80) + '…' : content
 }
+
+// 解析 attributes 并提取所有标签
+function parseAttributes(attributes: string | null | undefined): string[] {
+  if (!attributes) return []
+  
+  try {
+    const attrs = typeof attributes === 'string' ? JSON.parse(attributes) : attributes
+    const tags: string[] = []
+    
+    // 遍历所有属性值，将逗号分隔的值拆分成单独的标签
+    Object.values(attrs).forEach((value) => {
+      if (typeof value === 'string') {
+        // 按逗号分隔并去除空格
+        const splitTags = value.split(',').map(tag => tag.trim()).filter(tag => tag)
+        tags.push(...splitTags)
+      }
+    })
+    
+    return tags
+  } catch (e) {
+    // 如果解析失败，返回空数组
+    return []
+  }
+}
 </script>
 
 <template>
@@ -83,9 +107,15 @@ function preview(content: string) {
       <div class="entity-header">
         <span class="entity-type">{{ profile.entity.type }}</span>
         <strong class="entity-name">{{ profile.entity.name }}</strong>
-        <p v-if="profile.entity.attributes" class="entity-attrs">
-          {{ profile.entity.attributes }}
-        </p>
+        <div v-if="parseAttributes(profile.entity.attributes).length" class="entity-attrs">
+          <span 
+            v-for="(tag, index) in parseAttributes(profile.entity.attributes)" 
+            :key="index" 
+            class="attr-tag"
+          >
+            {{ tag }}
+          </span>
+        </div>
       </div>
       <div v-if="profile.relations.length" class="section">
         <h4>关系</h4>
@@ -151,8 +181,19 @@ function preview(content: string) {
   font-size: 1rem;
 }
 .entity-attrs {
-  margin: 0.25rem 0 0 0;
-  color: #666;
+  margin: 0.5rem 0 0 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+.attr-tag {
+  display: inline-block;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  background: #f0f0f0;
+  color: #555;
+  font-size: 0.75rem;
+  line-height: 1.2;
 }
 .section {
   margin-top: 0.75rem;
