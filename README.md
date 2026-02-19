@@ -1,5 +1,7 @@
 # Kraph — Personal Knowledge Graph
 
+[中文](./README_CN.md) | **English**
+
 > A local-first desktop app that turns your notes into a living knowledge graph, powered by LLMs.
 
 Kraph extracts entities (people, places, events, time) and their relationships from the text you write. It builds a visual knowledge graph you can explore, search, and query in natural language — all running on your machine with your data staying private.
