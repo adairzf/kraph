@@ -1,0 +1,154 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  # ── 多平台构建 ──────────────────────────────────────────────
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-14        # Apple Silicon (M1/M2/M3/M4)
+          - platform: macos-13        # Intel x64
+          - platform: windows-latest  # Windows x64
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v3
+        with:
+          version: latest
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ./src-tauri -> target
+
+      - name: Install frontend dependencies
+        run: pnpm install
+
+      - name: Build Tauri app and publish to GitHub Releases
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: Kraph ${{ github.ref_name }}
+          releaseBody: |
+            ## 下载 / Download
+
+            请根据你的平台选择对应安装包：
+
+            | 平台 | 文件 |
+            |------|------|
+            | macOS Apple Silicon (M1/M2/M3/M4) | `*_aarch64.dmg` |
+            | macOS Intel | `*_x64.dmg` |
+            | Windows | `*_x64-setup.exe` 或 `*_x64_en-US.msi` |
+
+            > ⚠️ macOS 首次打开提示"无法验证"：系统设置 → 隐私与安全 → 仍要打开
+            > ⚠️ Windows SmartScreen 警告：更多信息 → 仍要运行
+          releaseDraft: false
+          prerelease: false
+
+  # ── 同步到 Gitee ────────────────────────────────────────────
+  sync-gitee:
+    needs: build
+    runs-on: ubuntu-latest
+    env:
+      GITEE_OWNER: daizf00
+      GITEE_REPO: kraph
+
+    steps:
+      - name: Sync release and assets to Gitee
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          echo "=== Fetching GitHub release for $TAG ==="
+          RELEASE_INFO=$(curl -s \
+            -H "Authorization: token $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$GH_REPO/releases/tags/$TAG")
+
+          export RELEASE_ID=$(echo "$RELEASE_INFO" | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))")
+          RELEASE_NAME=$(echo "$RELEASE_INFO" | python3 -c "import sys,json; print(json.load(sys.stdin).get('name',''))")
+
+          if [ -z "$RELEASE_ID" ]; then
+            echo "Could not find GitHub release for tag $TAG"
+            exit 1
+          fi
+          echo "GitHub Release ID: $RELEASE_ID"
+
+          echo "=== Creating Gitee release ==="
+          GITEE_RESPONSE=$(curl -s -X POST "https://gitee.com/api/v5/repos/$GITEE_OWNER/$GITEE_REPO/releases" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"access_token\": \"$GITEE_TOKEN\",
+              \"tag_name\": \"$TAG\",
+              \"name\": \"$RELEASE_NAME\",
+              \"target_commitish\": \"master\",
+              \"prerelease\": false
+            }")
+
+          export GITEE_RELEASE_ID=$(echo "$GITEE_RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))")
+
+          if [ -z "$GITEE_RELEASE_ID" ]; then
+            echo "Failed to create Gitee release: $GITEE_RESPONSE"
+            exit 1
+          fi
+          echo "Gitee Release ID: $GITEE_RELEASE_ID"
+
+          echo "=== Fetching asset list ==="
+          curl -s \
+            -H "Authorization: token $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$GH_REPO/releases/$RELEASE_ID/assets" \
+            > /tmp/assets.json
+
+          echo "=== Uploading assets to Gitee ==="
+          python3 <<'PYEOF'
+          import json, subprocess, urllib.request, os
+
+          with open('/tmp/assets.json') as f:
+              assets = json.load(f)
+
+          token       = os.environ['GITEE_TOKEN']
+          owner       = os.environ['GITEE_OWNER']
+          repo        = os.environ['GITEE_REPO']
+          release_id  = os.environ['GITEE_RELEASE_ID']
+
+          print(f"Uploading {len(assets)} assets...")
+          for asset in assets:
+              name = asset['name']
+              url  = asset['browser_download_url']
+              dest = f'/tmp/{name}'
+              print(f'  [{name}] Downloading...')
+              urllib.request.urlretrieve(url, dest)
+              print(f'  [{name}] Uploading to Gitee...')
+              r = subprocess.run([
+                  'curl', '-s', '-X', 'POST',
+                  f'https://gitee.com/api/v5/repos/{owner}/{repo}/releases/{release_id}/attach_files',
+                  '-F', f'access_token={token}',
+                  '-F', f'file=@{dest}'
+              ], capture_output=True, text=True)
+              print(f'  [{name}] Done. Response: {r.stdout[:120]}')
+
+          print("All assets uploaded!")
+          PYEOF
+
+          echo "=== Sync complete! ==="
+          echo "Gitee: https://gitee.com/$GITEE_OWNER/$GITEE_REPO/releases/tag/$TAG"
