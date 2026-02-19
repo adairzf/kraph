@@ -51,6 +51,11 @@ fn resolve_whisper_bin() -> String {
             return v;
         }
     }
+    // 在 macOS / Windows 上优先查找已知固定路径，避免 GUI 应用 PATH 不完整的问题
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    if let Some(p) = find_whisper_cli() {
+        return p;
+    }
     // Common binary names: whisper-cli (new) / main (legacy)
     "whisper-cli".to_string()
 }
@@ -75,35 +80,162 @@ fn command_exists(cmd: &str) -> bool {
         .unwrap_or(false)
 }
 
-fn try_install_whisper_cli() -> Result<String, String> {
+// ── macOS ──────────────────────────────────────────────────────────────────
+
+/// Homebrew 在 macOS 上的常见安装路径（Apple Silicon 和 Intel）
+#[cfg(target_os = "macos")]
+const BREW_PATHS: &[&str] = &[
+    "/opt/homebrew/bin/brew",
+    "/usr/local/bin/brew",
+    "/home/linuxbrew/.linuxbrew/bin/brew",
+];
+
+#[cfg(target_os = "macos")]
+const WHISPER_CLI_PATHS_MACOS: &[&str] = &[
+    "/opt/homebrew/bin/whisper-cli",
+    "/usr/local/bin/whisper-cli",
+    "/opt/homebrew/opt/whisper-cpp/bin/whisper-cli",
+    "/usr/local/opt/whisper-cpp/bin/whisper-cli",
+];
+
+/// 在 macOS 上查找 brew 可执行文件路径，先尝试 PATH，再检查已知固定路径
+#[cfg(target_os = "macos")]
+fn find_brew() -> Option<String> {
+    if command_exists("brew") {
+        return Some("brew".to_string());
+    }
+    for p in BREW_PATHS {
+        if Path::new(p).exists() {
+            return Some(p.to_string());
+        }
+    }
+    None
+}
+
+#[cfg(target_os = "macos")]
+fn find_whisper_cli() -> Option<String> {
     if command_exists("whisper-cli") {
-        return Ok("whisper-cli is already available".to_string());
+        return Some("whisper-cli".to_string());
+    }
+    for p in WHISPER_CLI_PATHS_MACOS {
+        if Path::new(p).exists() {
+            return Some(p.to_string());
+        }
+    }
+    None
+}
+
+// ── Windows ────────────────────────────────────────────────────────────────
+
+/// whisper-cli 在 Windows 上的常见安装路径
+/// 覆盖 winget / Scoop / Chocolatey / 手动解压等场景
+#[cfg(target_os = "windows")]
+fn whisper_cli_paths_windows() -> Vec<PathBuf> {
+    let mut paths: Vec<PathBuf> = vec![
+        // winget 默认安装目录（LOCALAPPDATA）
+        PathBuf::from(r"C:\Program Files\whisper-cpp\whisper-cli.exe"),
+        PathBuf::from(r"C:\Program Files (x86)\whisper-cpp\whisper-cli.exe"),
+        // Scoop 安装路径
+        PathBuf::from(r"C:\Users\Default\scoop\apps\whisper-cpp\current\whisper-cli.exe"),
+        // Chocolatey 安装路径
+        PathBuf::from(r"C:\ProgramData\chocolatey\bin\whisper-cli.exe"),
+    ];
+
+    // %LOCALAPPDATA%\Programs\whisper-cpp\whisper-cli.exe  (winget per-user)
+    if let Ok(local_app) = env::var("LOCALAPPDATA") {
+        paths.push(PathBuf::from(format!(r"{local_app}\Programs\whisper-cpp\whisper-cli.exe")));
+    }
+    // %USERPROFILE%\scoop\apps\whisper-cpp\current\whisper-cli.exe
+    if let Ok(home) = env::var("USERPROFILE") {
+        paths.push(PathBuf::from(format!(r"{home}\scoop\apps\whisper-cpp\current\whisper-cli.exe")));
+        paths.push(PathBuf::from(format!(r"{home}\scoop\shims\whisper-cli.exe")));
     }
 
+    paths
+}
+
+#[cfg(target_os = "windows")]
+fn find_whisper_cli() -> Option<String> {
+    if command_exists("whisper-cli") {
+        return Some("whisper-cli".to_string());
+    }
+    for p in whisper_cli_paths_windows() {
+        if p.exists() {
+            return Some(p.to_string_lossy().to_string());
+        }
+    }
+    None
+}
+
+/// 在 Windows 上尝试用 winget 安装 whisper-cpp，失败则提示手动安装
+#[cfg(target_os = "windows")]
+fn try_install_with_winget() -> Result<String, String> {
+    let output = Command::new("winget")
+        .args(["install", "--id", "whisper-cpp.whisper-cpp", "-e", "--silent"])
+        .output()
+        .map_err(|e| format!("winget 调用失败: {e}"))?;
+
+    if output.status.success() {
+        return Ok("whisper-cpp installed via winget".to_string());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    Err(format!("winget install whisper-cpp failed: {stderr}"))
+}
+
+// ── 平台统一入口 ──────────────────────────────────────────────────────────
+
+fn try_install_whisper_cli() -> Result<String, String> {
     #[cfg(target_os = "macos")]
     {
-        if !command_exists("brew") {
-            return Err(
-                "Homebrew not found. Cannot auto-install whisper-cpp. Please install Homebrew first: https://brew.sh".to_string(),
-            );
+        if find_whisper_cli().is_some() {
+            return Ok("whisper-cli is already available".to_string());
         }
-        let output = Command::new("brew")
-            .arg("install")
-            .arg("whisper-cpp")
+        let brew = find_brew().ok_or_else(|| {
+            "Homebrew not found. Cannot auto-install whisper-cpp. Please install Homebrew first: https://brew.sh".to_string()
+        })?;
+        let output = Command::new(&brew)
+            .args(["install", "whisper-cpp"])
             .output()
             .map_err(|e| format!("Auto-install of whisper-cpp failed: {e}"))?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(format!("brew install whisper-cpp failed: {stderr}"));
         }
-        if !command_exists("whisper-cli") {
-            return Err("Installation ran but whisper-cli is still not found. Please restart your terminal and try again.".to_string());
+        if find_whisper_cli().is_none() {
+            return Err("Installation ran but whisper-cli is still not found. Please restart the app.".to_string());
         }
-        return Ok("whisper-cpp installed successfully".to_string());
+        return Ok("whisper-cpp installed successfully via Homebrew".to_string());
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
     {
+        if find_whisper_cli().is_some() {
+            return Ok("whisper-cli is already available".to_string());
+        }
+        // 先尝试 winget（Windows 10/11 内置）
+        match try_install_with_winget() {
+            Ok(msg) => {
+                if find_whisper_cli().is_some() {
+                    return Ok(msg);
+                }
+                return Err("winget reported success but whisper-cli is still not found. Please restart the app.".to_string());
+            }
+            Err(e) => {
+                return Err(format!(
+                    "{e}\n\n请手动安装 whisper-cpp：\n\
+                     1. 从 https://github.com/ggerganov/whisper.cpp/releases 下载最新 Windows 压缩包\n\
+                     2. 解压后将 whisper-cli.exe 所在目录添加到系统 PATH，或设置环境变量 WHISPER_CPP_PATH 指向该 exe\n\
+                     3. 重启应用"
+                ));
+            }
+        }
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        if command_exists("whisper-cli") {
+            return Ok("whisper-cli is already available".to_string());
+        }
         Err("Auto-install of whisper-cpp is not implemented on this platform. Please install whisper-cli manually.".to_string())
     }
 }
