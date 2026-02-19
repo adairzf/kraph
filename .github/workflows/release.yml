@@ -64,7 +64,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tagName: ${{ github.ref_name }}
-          releaseName: 'MemoryAI v__VERSION__'
+          releaseName: 'Kraph v__VERSION__'
           releaseBody: |
             ## 更新内容
 

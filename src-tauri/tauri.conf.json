@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "memoryai",
+  "productName": "Kraph",
   "version": "0.1.0",
-  "identifier": "com.zhoufengdai.memoryai",
+  "identifier": "me.kraph.app",
   "build": {
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "memoryai",
+        "title": "Kraph",
         "width": 800,
         "height": 600
       }

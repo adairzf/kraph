@@ -828,7 +828,7 @@ pub fn run() {
         .setup(|app| {
             let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
             let db_dir = app_data_dir.join("database");
-            let db_path = db_dir.join("memoryai.db");
+            let db_path = db_dir.join("kraph.db");
             let conn = init_db(&db_path).map_err(|e| e.to_string())?;
             app.manage(DbState(Mutex::new(Some(conn))));
             app.manage(AppDataDir(app_data_dir.clone()));

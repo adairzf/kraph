@@ -1,8 +1,8 @@
-# MemoryAI — Personal Knowledge Graph
+# Kraph — Personal Knowledge Graph
 
 > A local-first desktop app that turns your notes into a living knowledge graph, powered by LLMs.
 
-MemoryAI extracts entities (people, places, events, time) and their relationships from the text you write. It builds a visual knowledge graph you can explore, search, and query in natural language — all running on your machine with your data staying private.
+Kraph extracts entities (people, places, events, time) and their relationships from the text you write. It builds a visual knowledge graph you can explore, search, and query in natural language — all running on your machine with your data staying private.
 
 ---
 
@@ -53,8 +53,8 @@ For AI features, you need **at least one** of:
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/your-username/memoryai.git
-cd memoryai
+git clone https://github.com/feng138168/kraph.git
+cd kraph
 
 # 2. Install frontend dependencies
 pnpm install
@@ -100,12 +100,12 @@ All data is stored locally in your OS app-data directory:
 
 | Platform | Path |
 |---|---|
-| macOS | `~/Library/Application Support/memoryai/` |
-| Windows | `%APPDATA%\memoryai\` |
-| Linux | `~/.local/share/memoryai/` |
+| macOS | `~/Library/Application Support/me.kraph.app/` |
+| Windows | `%APPDATA%\me.kraph.app\` |
+| Linux | `~/.local/share/me.kraph.app/` |
 
 Inside that directory:
-- `database/memoryai.db` — SQLite database (entities, relations, memories)
+- `database/kraph.db` — SQLite database (entities, relations, memories)
 - `memories/YYYY/MM/` — one Markdown file per memory with YAML frontmatter
 - `model_config.json` — saved model configuration
 
@@ -116,7 +116,7 @@ The Markdown files are plain text and portable — you can open them in any edit
 ## 🏗️ Project Structure
 
 ```
-memoryai/
+kraph/
 ├── src/                        # Vue 3 frontend
 │   ├── components/             # UI components
 │   │   ├── InputPanel.vue      # Memory input + voice recording

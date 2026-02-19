@@ -1,16 +1,16 @@
 #!/bin/bash
 
-# MemoryAI 数据库查看脚本
+# Kraph 数据库查看脚本
 # 使用方法: ./view_database.sh
 
-DB_PATH="$HOME/Library/Application Support/com.zhoufengdai.memoryai/database/memoryai.db"
+DB_PATH="$HOME/Library/Application Support/me.kraph.app/database/kraph.db"
 
 if [ ! -f "$DB_PATH" ]; then
     echo "❌ 数据库文件不存在: $DB_PATH"
     exit 1
 fi
 
-echo "📊 MemoryAI 数据库概览"
+echo "📊 Kraph 数据库概览"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
