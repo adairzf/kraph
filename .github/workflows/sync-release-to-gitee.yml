@@ -1,0 +1,82 @@
+name: Sync Release to Gitee
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Sync release and assets to Gitee
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITEE_OWNER: daizf00
+          GITEE_REPO: kraph
+          TAG: ${{ github.event.release.tag_name }}
+          RELEASE_NAME: ${{ github.event.release.name }}
+          RELEASE_BODY: ${{ github.event.release.body }}
+          RELEASE_ID: ${{ github.event.release.id }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          # 1. 创建 Gitee Release
+          echo "Creating Gitee release for tag: $TAG"
+          RESPONSE=$(curl -s -X POST "https://gitee.com/api/v5/repos/$GITEE_OWNER/$GITEE_REPO/releases" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"access_token\": \"$GITEE_TOKEN\",
+              \"tag_name\": \"$TAG\",
+              \"name\": \"$RELEASE_NAME\",
+              \"body\": $(echo "$RELEASE_BODY" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))'),
+              \"prerelease\": false
+            }")
+
+          GITEE_RELEASE_ID=$(echo "$RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('id',''))" 2>/dev/null)
+
+          if [ -z "$GITEE_RELEASE_ID" ]; then
+            echo "Failed to create Gitee release. Response:"
+            echo "$RESPONSE"
+            exit 1
+          fi
+          echo "Gitee Release ID: $GITEE_RELEASE_ID"
+
+          # 2. 获取 GitHub Release 附件列表
+          ASSETS=$(curl -s \
+            -H "Authorization: token $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$GH_REPO/releases/$RELEASE_ID/assets")
+
+          ASSET_COUNT=$(echo "$ASSETS" | python3 -c "import sys,json; print(len(json.load(sys.stdin)))")
+          echo "Found $ASSET_COUNT assets to upload"
+
+          # 3. 下载并上传每个附件到 Gitee
+          echo "$ASSETS" | python3 -c "
+          import sys, json, subprocess, urllib.request, os
+
+          assets = json.load(sys.stdin)
+          gitee_token = os.environ['GITEE_TOKEN']
+          gitee_owner = os.environ['GITEE_OWNER']
+          gitee_repo = os.environ['GITEE_REPO']
+          gitee_release_id = os.environ['GITEE_RELEASE_ID']
+
+          for asset in assets:
+              name = asset['name']
+              url = asset['browser_download_url']
+              print(f'Downloading {name} ...')
+              urllib.request.urlretrieve(url, name)
+              print(f'Uploading {name} to Gitee ...')
+              result = subprocess.run([
+                  'curl', '-s', '-X', 'POST',
+                  f'https://gitee.com/api/v5/repos/{gitee_owner}/{gitee_repo}/releases/{gitee_release_id}/attach_files',
+                  '-F', f'access_token={gitee_token}',
+                  '-F', f'file=@{name}'
+              ], capture_output=True, text=True)
+              print(result.stdout)
+              if result.returncode != 0:
+                  print(f'Error uploading {name}:', result.stderr)
+              else:
+                  print(f'Done: {name}')
+          " GITEE_RELEASE_ID="$GITEE_RELEASE_ID"
+
+          echo "All done! Gitee release: https://gitee.com/$GITEE_OWNER/$GITEE_REPO/releases/tag/$TAG"

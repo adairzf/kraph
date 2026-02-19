@@ -498,29 +498,52 @@
     <div class="dl-card">
       <div class="dl-platform"><span class="dl-platform-icon">🍎</span><div><div class="dl-platform-name">macOS</div><div class="dl-platform-sub">Apple Silicon (M1/M2/M3/M4)</div></div></div>
       <div class="dl-buttons">
-        <a class="dl-btn" href="https://github.com/feng138168/kraph/releases/latest" target="_blank"><span data-i18n="dl.dmg">下载 .dmg</span><span class="dl-btn-ext">ARM64</span></a>
+        <a class="dl-btn dl-link"
+           data-href-zh="https://gitee.com/daizf00/kraph/releases/latest"
+           data-href-en="https://github.com/feng138168/kraph/releases/latest"
+           href="https://gitee.com/daizf00/kraph/releases/latest" target="_blank">
+          <span data-i18n="dl.dmg">下载 .dmg</span><span class="dl-btn-ext">ARM64</span>
+        </a>
       </div>
       <div class="dl-note" data-i18n="dl.macNote">⚠️ 首次打开如提示"无法验证"，请在系统设置→隐私与安全→仍要打开</div>
     </div>
     <div class="dl-card">
       <div class="dl-platform"><span class="dl-platform-icon">🍎</span><div><div class="dl-platform-name">macOS</div><div class="dl-platform-sub">Intel (x86_64)</div></div></div>
       <div class="dl-buttons">
-        <a class="dl-btn" href="https://github.com/feng138168/kraph/releases/latest" target="_blank"><span data-i18n="dl.dmg">下载 .dmg</span><span class="dl-btn-ext">x64</span></a>
+        <a class="dl-btn dl-link"
+           data-href-zh="https://gitee.com/daizf00/kraph/releases/latest"
+           data-href-en="https://github.com/feng138168/kraph/releases/latest"
+           href="https://gitee.com/daizf00/kraph/releases/latest" target="_blank">
+          <span data-i18n="dl.dmg">下载 .dmg</span><span class="dl-btn-ext">x64</span>
+        </a>
       </div>
       <div class="dl-note" data-i18n="dl.macIntelNote">适用于 2020 年前的 Intel Mac，需 macOS 10.15+</div>
     </div>
     <div class="dl-card">
       <div class="dl-platform"><span class="dl-platform-icon">🪟</span><div><div class="dl-platform-name">Windows</div><div class="dl-platform-sub">64 位 (x86_64)</div></div></div>
       <div class="dl-buttons">
-        <a class="dl-btn" href="https://github.com/feng138168/kraph/releases/latest" target="_blank"><span data-i18n="dl.exe">下载安装包</span><span class="dl-btn-ext">.exe</span></a>
-        <a class="dl-btn" href="https://github.com/feng138168/kraph/releases/latest" target="_blank"><span data-i18n="dl.msi">下载 MSI</span><span class="dl-btn-ext">.msi</span></a>
+        <a class="dl-btn dl-link"
+           data-href-zh="https://gitee.com/daizf00/kraph/releases/latest"
+           data-href-en="https://github.com/feng138168/kraph/releases/latest"
+           href="https://gitee.com/daizf00/kraph/releases/latest" target="_blank">
+          <span data-i18n="dl.exe">下载安装包</span><span class="dl-btn-ext">.exe</span>
+        </a>
+        <a class="dl-btn dl-link"
+           data-href-zh="https://gitee.com/daizf00/kraph/releases/latest"
+           data-href-en="https://github.com/feng138168/kraph/releases/latest"
+           href="https://gitee.com/daizf00/kraph/releases/latest" target="_blank">
+          <span data-i18n="dl.msi">下载 MSI</span><span class="dl-btn-ext">.msi</span>
+        </a>
       </div>
       <div class="dl-note" data-i18n="dl.winNote">如触发 SmartScreen 警告，请点击"更多信息→仍要运行"</div>
     </div>
   </div>
   <div class="dl-version">
-    <span data-i18n="dl.releaseNote">点击上方按钮前往 GitHub Releases 页面，选择对应平台文件下载 · 查看</span>
-    <a href="https://github.com/feng138168/kraph/releases" target="_blank" data-i18n="dl.changelog">所有版本发布记录</a>
+    <span data-i18n="dl.releaseNote">点击上方按钮前往 Gitee 发行版页面，选择对应平台文件下载 · 查看</span>
+    <a class="dl-changelog-link"
+       data-href-zh="https://gitee.com/daizf00/kraph/releases"
+       data-href-en="https://github.com/feng138168/kraph/releases"
+       href="https://gitee.com/daizf00/kraph/releases" target="_blank" data-i18n="dl.changelog">所有版本发布记录</a>
     · <span data-i18n="dl.source">从源码构建请参考</span>
     <a href="https://github.com/feng138168/kraph#getting-started" target="_blank">README</a>
   </div>
@@ -695,7 +718,7 @@ const i18n = {
     'dl.macNote': '⚠️ 首次打开如提示"无法验证"，请在系统设置→隐私与安全→仍要打开',
     'dl.macIntelNote': '适用于 2020 年前的 Intel Mac，需 macOS 10.15+',
     'dl.winNote': '如触发 SmartScreen 警告，请点击"更多信息→仍要运行"',
-    'dl.releaseNote': '点击上方按钮前往 GitHub Releases 页面，选择对应平台文件下载 · 查看',
+    'dl.releaseNote': '点击上方按钮前往 Gitee 发行版页面，选择对应平台文件下载 · 查看',
     'dl.version': '最新版本 v0.1.0 · 查看',
     'dl.changelog': '所有版本发布记录',
     'dl.source': '从源码构建请参考',
@@ -839,7 +862,7 @@ const i18n = {
     'dl.macNote': '⚠️ If macOS says "cannot verify", go to System Settings → Privacy & Security → Open Anyway',
     'dl.macIntelNote': 'For Intel Macs (pre-2020). Requires macOS 10.15+',
     'dl.winNote': 'If SmartScreen warns you, click "More info → Run anyway"',
-    'dl.releaseNote': 'Click a button above to visit GitHub Releases and download the file for your platform · See',
+    'dl.releaseNote': 'Click a button above to visit GitHub Releases and download for your platform · See',
     'dl.version': 'Latest version v0.1.0 · See',
     'dl.changelog': 'all releases',
     'dl.source': 'Build from source:',
@@ -881,6 +904,11 @@ function applyLang() {
   document.querySelectorAll('[data-i18n-svg]').forEach(el => {
     const key = el.getAttribute('data-i18n-svg')
     if (i18n[currentLang][key] !== undefined) el.textContent = i18n[currentLang][key]
+  })
+
+  // switch download links based on language
+  document.querySelectorAll('[data-href-zh]').forEach(el => {
+    el.href = currentLang === 'zh' ? el.getAttribute('data-href-zh') : el.getAttribute('data-href-en')
   })
 
   // toggle button states
