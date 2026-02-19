@@ -24,30 +24,56 @@ const graphStore = useGraphStore()
 const chartOption = computed(() => {
   const g = graphStore.graphData
   if (!g || (!g.nodes.length && !g.links.length)) {
-    return { title: { text: 'No graph data', left: 'center' } }
+    return {
+      backgroundColor: 'transparent',
+      title: {
+        text: 'No graph data',
+        left: 'center',
+        top: 'middle',
+        textStyle: { color: '#4a4a5e', fontSize: 13, fontWeight: 'normal' },
+      },
+    }
   }
   const nodeColors: Record<string, string> = {
-    Person: '#5470c6',
-    Location: '#91cc75',
-    Event: '#fac858',
-    Time: '#ee6666',
+    Person: '#7c5cfc',
+    Location: '#34d399',
+    Event: '#f472b6',
+    Time: '#fb923c',
+    Organization: '#3b82f6',
   }
   const nodes = g.nodes.map((n: { id: string; name: string; type: string }) => ({
     id: n.id,
     name: n.name,
-    symbolSize: 35,
-    itemStyle: { color: nodeColors[n.type] ?? '#999' },
-    label: { show: true, fontSize: 12 },
+    symbolSize: 34,
+    itemStyle: {
+      color: nodeColors[n.type] ?? '#22d3ee',
+      borderColor: 'rgba(255,255,255,0.12)',
+      borderWidth: 1,
+      shadowBlur: 6,
+      shadowColor: (nodeColors[n.type] ?? '#22d3ee') + '50',
+    },
+    label: {
+      show: true,
+      fontSize: 11,
+      color: '#e2e2ee',
+      fontFamily: 'Inter, -apple-system, sans-serif',
+    },
   }))
   const links = g.links.map((l: { source: string; target: string; relation: string; strength: number }) => ({
     source: l.source,
     target: l.target,
     value: l.relation,
-    lineStyle: { width: Math.max(1, Math.min(l.strength, 4)) },
+    lineStyle: {
+      width: Math.max(1, Math.min(l.strength, 3)),
+      color: 'rgba(255,255,255,0.12)',
+    },
   }))
   return {
-    title: { text: 'Knowledge Graph', left: 'center', top: 8, textStyle: { fontSize: 16 } },
+    backgroundColor: 'transparent',
     tooltip: {
+      backgroundColor: '#16161f',
+      borderColor: 'rgba(255,255,255,0.08)',
+      textStyle: { color: '#e2e2ee', fontSize: 12 },
       formatter: (params: unknown) => {
         const p = params as { dataType?: string; data?: { name?: string; value?: string } }
         return p.dataType === 'edge' ? p.data?.value ?? '' : p.data?.name ?? ''
@@ -58,22 +84,41 @@ const chartOption = computed(() => {
         type: 'graph',
         layout: 'force',
         roam: true,
-        label: { position: 'right', fontSize: 12 },
+        label: { position: 'right', fontSize: 11, color: '#e2e2ee' },
         edgeSymbol: ['none', 'arrow'],
-        edgeSymbolSize: 8,
+        edgeSymbolSize: 6,
         edgeLabel: {
           show: true,
           fontSize: 10,
+          color: '#7a7a8e',
           formatter: '{c}',
         },
         data: nodes,
         links,
         force: {
-          repulsion: 300,
-          edgeLength: 120,
-          gravity: 0.1,
+          repulsion: 320,
+          edgeLength: 130,
+          gravity: 0.08,
         },
-        emphasis: { focus: 'adjacency' },
+        emphasis: {
+          focus: 'adjacency',
+          itemStyle: {
+            borderWidth: 2,
+            borderColor: 'rgba(255,255,255,0.5)',
+            shadowBlur: 16,
+          },
+          label: { color: '#ffffff' },
+        },
+        blur: {
+          itemStyle: {
+            opacity: 0.12,
+            shadowBlur: 0,
+            borderWidth: 0,
+          },
+          label: { opacity: 0.15 },
+          lineStyle: { opacity: 0.05 },
+          edgeLabel: { opacity: 0 },
+        },
       },
     ],
   }
@@ -104,16 +149,16 @@ onMounted(() => {
 .graph-panel {
   height: 100%;
   position: relative;
+  background: transparent;
 }
 .loading,
 .error {
   padding: 1rem;
   margin: 0;
-  font-size: 0.875rem;
+  font-size: 0.8125rem;
+  color: var(--text-muted);
 }
-.error {
-  color: var(--color-error, #c00);
-}
+.error { color: var(--red); }
 .chart {
   width: 100%;
   height: 100%;

@@ -49,26 +49,31 @@ function formatDate(created: string) {
   overflow: hidden;
 }
 .panel-title {
-  margin: 0 0 0.75rem 0;
-  font-size: 1rem;
+  margin: 0 0 10px 0;
+  font-size: 11px;
   font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
 }
 .loading,
 .error {
-  margin: 0.5rem 0;
-  font-size: 0.875rem;
+  margin: 8px 0;
+  font-size: 13px;
+  color: var(--text-muted);
 }
-.error {
-  color: var(--color-error, #c00);
-}
+.error { color: var(--red); }
 .timeline-list {
   flex: 1;
   overflow-y: auto;
-  padding-left: 0.5rem;
+  padding-left: 8px;
 }
+.timeline-list::-webkit-scrollbar { width: 3px; }
+.timeline-list::-webkit-scrollbar-track { background: transparent; }
+.timeline-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
 .timeline-item {
   position: relative;
-  padding-bottom: 1rem;
+  padding-bottom: 14px;
   cursor: pointer;
 }
 .timeline-item::before {
@@ -76,41 +81,37 @@ function formatDate(created: string) {
   position: absolute;
   left: 5px;
   top: 12px;
-  bottom: -0.5rem;
+  bottom: -4px;
   width: 1px;
-  background: #ddd;
+  background: var(--border);
 }
-.timeline-item:last-child::before {
-  display: none;
-}
+.timeline-item:last-child::before { display: none; }
 .timeline-dot {
   position: absolute;
   left: 0;
   top: 4px;
-  width: 12px;
-  height: 12px;
+  width: 11px;
+  height: 11px;
   border-radius: 50%;
-  background: #24c8db;
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent-glow);
 }
-.timeline-content {
-  margin-left: 1.25rem;
-}
+.timeline-content { margin-left: 20px; }
 .timeline-date {
   display: block;
-  font-size: 0.75rem;
-  color: #666;
-  margin-bottom: 4px;
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-bottom: 3px;
 }
 .timeline-preview {
   margin: 0;
-  font-size: 0.875rem;
-  line-height: 1.4;
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.45;
   display: -webkit-box;
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
-.timeline-item:hover .timeline-preview {
-  color: #24c8db;
-}
+.timeline-item:hover .timeline-preview { color: var(--text); }
 </style>

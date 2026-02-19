@@ -162,61 +162,73 @@ function parseAttributes(attributes: string | null | undefined): string[] {
 
 <style scoped>
 .character-card {
-  padding: 0.75rem 0;
-  border-top: 1px solid rgba(0, 0, 0, 0.08);
-  font-size: 0.875rem;
+  font-size: 13px;
 }
 .card-title {
-  margin: 0 0 0.5rem 0;
-  font-size: 0.9375rem;
+  margin: 0 0 10px 0;
+  font-size: 11px;
   font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
 }
 .loading,
-.error,
 .hint {
-  margin: 0.25rem 0;
-  color: #666;
+  margin: 4px 0;
+  color: var(--text-dim);
+  font-size: 13px;
 }
 .error {
-  color: var(--color-error, #c00);
+  margin: 4px 0;
+  color: var(--red);
+  font-size: 13px;
 }
 .entity-header {
-  margin-bottom: 0.75rem;
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 .entity-type {
   display: inline-block;
-  padding: 0.15rem 0.4rem;
-  border-radius: 4px;
-  background: #e8f4f8;
-  color: #24c8db;
-  font-size: 0.75rem;
-  margin-right: 0.5rem;
+  padding: 2px 8px;
+  border-radius: 100px;
+  background: rgba(124, 92, 252, 0.12);
+  border: 1px solid rgba(124, 92, 252, 0.25);
+  color: #a78bfa;
+  font-size: 11px;
+  font-weight: 500;
 }
 .entity-name {
-  font-size: 1rem;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
 }
 .entity-attrs {
-  margin: 0.5rem 0 0 0;
+  width: 100%;
+  margin-top: 6px;
   display: flex;
   flex-wrap: wrap;
-  gap: 0.4rem;
+  gap: 4px;
 }
 .attr-tag {
   display: inline-block;
-  padding: 0.2rem 0.5rem;
+  padding: 2px 7px;
   border-radius: 4px;
-  background: #f0f0f0;
-  color: #555;
-  font-size: 0.75rem;
-  line-height: 1.2;
+  background: var(--bg4);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 11px;
 }
-.section {
-  margin-top: 0.75rem;
-}
+.section { margin-top: 12px; }
 .section h4 {
-  margin: 0 0 0.35rem 0;
-  font-size: 0.8125rem;
-  color: #666;
+  margin: 0 0 6px 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-dim);
 }
 .relations,
 .memories {
@@ -227,37 +239,41 @@ function parseAttributes(attributes: string | null | undefined): string[] {
 .relation-item {
   display: flex;
   align-items: center;
-  gap: 0.3rem;
-  padding: 0.2rem 0;
-  border-bottom: 1px solid #f0f0f0;
+  gap: 5px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--border);
   flex-wrap: wrap;
   line-height: 1.5;
 }
-.relation-item:last-child {
-  border-bottom: none;
-}
+.relation-item:last-child { border-bottom: none; }
 .rel-entity {
-  color: #333;
+  color: var(--text);
   font-weight: 500;
+  font-size: 13px;
 }
 .rel-entity.rel-self {
-  color: #24c8db;
+  color: #a78bfa;
   font-weight: 600;
 }
 .rel-type {
-  color: #888;
-  font-size: 0.8rem;
-  padding: 0.05rem 0.35rem;
-  background: #f5f5f5;
-  border-radius: 3px;
+  color: var(--text-dim);
+  font-size: 12px;
+  padding: 1px 6px;
+  background: var(--bg4);
+  border: 1px solid var(--border);
+  border-radius: 4px;
   white-space: nowrap;
 }
 .memory-item {
-  padding: 0.25rem 0;
-  border-bottom: 1px solid #eee;
-  line-height: 1.4;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--border);
+  line-height: 1.45;
+  color: var(--text-muted);
+  font-size: 13px;
 }
-.memory-item:last-child {
-  border-bottom: none;
+.memory-item::before {
+  content: '· ';
+  color: var(--text-dim);
 }
+.memory-item:last-child { border-bottom: none; }
 </style>

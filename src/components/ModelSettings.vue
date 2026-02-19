@@ -301,84 +301,81 @@ function getCurrentProviderInfo(): string {
 
 <style scoped>
 .model-settings {
-  padding: 20px;
-  max-width: 800px;
-  margin: 0 auto;
+  padding: 0;
 }
 
 h2 {
-  margin-bottom: 20px;
-  font-size: 24px;
+  margin-bottom: 14px;
+  font-size: 14px;
   font-weight: 600;
+  color: var(--text);
 }
 
 .current-model-alert {
-  margin-bottom: 20px;
+  margin-bottom: 14px;
 }
 
 .current-model-details {
-  font-size: 14px;
+  font-size: 13px;
   line-height: 1.8;
+  color: var(--text-muted);
 }
 
 .current-model-details p {
-  margin: 5px 0;
+  margin: 4px 0;
 }
 
 .current-model-details strong {
-  color: #409eff;
+  color: #a78bfa;
 }
 
 .settings-form {
-  margin-bottom: 30px;
+  margin-bottom: 20px;
 }
 
 .form-tip {
   display: block;
-  margin-top: 5px;
+  margin-top: 4px;
   font-size: 12px;
-  color: #909399;
+  color: var(--text-dim);
 }
 
-.form-tip a {
-  color: #409eff;
-  text-decoration: none;
-}
+.form-tip a { color: #a78bfa; text-decoration: none; }
+.form-tip a:hover { text-decoration: underline; }
 
-.form-tip a:hover {
-  text-decoration: underline;
-}
-
-.info-card {
-  margin-top: 30px;
-}
+.info-card { margin-top: 20px; }
 
 .info-content h4 {
-  margin: 15px 0 10px 0;
-  font-size: 16px;
+  margin: 10px 0 6px 0;
+  font-size: 13px;
   font-weight: 600;
+  color: var(--text);
 }
-
-.info-content h4:first-child {
-  margin-top: 0;
-}
+.info-content h4:first-child { margin-top: 0; }
 
 .info-content ul {
-  margin: 0 0 10px 20px;
+  margin: 0 0 8px 18px;
   padding: 0;
   list-style: disc;
 }
 
 .info-content li {
-  margin: 5px 0;
+  margin: 4px 0;
   line-height: 1.6;
+  font-size: 13px;
+  color: var(--text-muted);
 }
+
+.info-content a { color: #a78bfa; text-decoration: none; }
+.info-content a:hover { text-decoration: underline; }
 
 .info-content code {
   padding: 2px 6px;
-  background: #f5f7fa;
-  border-radius: 3px;
+  background: var(--bg4);
+  border: 1px solid var(--border);
+  border-radius: 4px;
   font-family: 'Monaco', 'Courier New', monospace;
-  font-size: 13px;
+  font-size: 12px;
+  color: var(--cyan);
 }
 </style>

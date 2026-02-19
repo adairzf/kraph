@@ -331,113 +331,104 @@ async function handleSave() {
 
 <style scoped>
 .input-panel {
-  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
-  padding: 0.75rem;
+  padding: 10px;
+  background: var(--bg2);
+  flex-shrink: 0;
 }
 .textarea {
   width: 100%;
   box-sizing: border-box;
-  padding: 0.5rem;
-  border: 1px solid #ddd;
-  border-radius: 6px;
-  font-size: 0.9375rem;
-  resize: vertical;
-  min-height: 80px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  background: var(--bg3);
+  color: var(--text);
+  border-radius: 7px;
+  font-size: 13px;
+  resize: none;
+  min-height: 70px;
+  max-height: 120px;
+  outline: none;
+  font-family: inherit;
+  line-height: 1.5;
+  transition: border-color 0.15s;
 }
+.textarea::placeholder { color: var(--text-dim); }
+.textarea:focus { border-color: rgba(124, 92, 252, 0.5); }
 .actions {
-  margin-top: 0.5rem;
+  margin-top: 7px;
   display: flex;
-  gap: 0.5rem;
+  gap: 6px;
   align-items: center;
 }
-.btn.voice {
-  background: #f0f0f0;
-}
-.btn.voice.active {
-  background: #24c8db;
-  color: #fff;
-  border-color: #24c8db;
-}
 .btn {
-  padding: 0.4rem 1rem;
+  padding: 5px 12px;
   border-radius: 6px;
-  border: 1px solid #ccc;
-  background: #f5f5f5;
+  border: 1px solid var(--border);
+  background: var(--bg4);
+  color: var(--text-muted);
   cursor: pointer;
-  font-size: 0.875rem;
+  font-size: 12px;
+  font-family: inherit;
+  transition: all 0.15s;
+}
+.btn:hover { background: var(--bg3); color: var(--text); border-color: var(--border-hover); }
+.btn.voice { background: var(--bg4); }
+.btn.voice.active {
+  background: rgba(124, 92, 252, 0.15);
+  color: #a78bfa;
+  border-color: rgba(124, 92, 252, 0.4);
 }
 .btn.primary {
-  background: #24c8db;
+  background: var(--grad);
   color: #fff;
-  border-color: #24c8db;
+  border-color: transparent;
+  font-weight: 500;
 }
-.btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
+.btn.primary:hover { opacity: 0.88; }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
 .voice-error {
-  margin: 0.5rem 0 0;
-  font-size: 0.8125rem;
-  color: #c00;
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--red);
 }
 .voice-progress {
-  margin: 0.5rem 0 0;
-  font-size: 0.8125rem;
-  color: #0a7f8c;
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--cyan);
 }
 
 /* Save progress panel */
 .save-progress {
-  margin-top: 0.6rem;
-  padding: 0.5rem 0.6rem;
-  background: #f8fffe;
-  border: 1px solid #d0f0f3;
+  margin-top: 8px;
+  padding: 8px 10px;
+  background: var(--bg3);
+  border: 1px solid var(--border);
   border-radius: 6px;
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
+  gap: 3px;
 }
 .progress-step {
   display: flex;
   align-items: flex-start;
-  gap: 0.4rem;
-  font-size: 0.8rem;
+  gap: 6px;
+  font-size: 12px;
   line-height: 1.4;
-  padding: 0.1rem 0;
+  padding: 1px 0;
 }
-.step-icon {
-  flex-shrink: 0;
-  font-size: 0.85rem;
-}
-.step-message {
-  color: #444;
-}
-.step-running .step-message {
-  color: #0a7f8c;
-  font-style: italic;
-}
-.step-success .step-message {
-  color: #2d7a2d;
-}
-.step-done .step-message {
-  color: #1a6e1a;
-  font-weight: 600;
-}
-.step-warning .step-message {
-  color: #b56f00;
-}
-.step-error .step-message {
-  color: #c00;
-}
-.step-skipped .step-message {
-  color: #999;
-}
-.step-info .step-message {
-  color: #555;
-}
+.step-icon { flex-shrink: 0; }
+.step-message { color: var(--text-muted); }
+.step-running .step-message { color: var(--cyan); font-style: italic; }
+.step-success .step-message { color: var(--green); }
+.step-done .step-message { color: var(--green); font-weight: 600; }
+.step-warning .step-message { color: var(--orange); }
+.step-error .step-message { color: var(--red); }
+.step-skipped .step-message { color: var(--text-dim); }
+.step-info .step-message { color: var(--text-muted); }
+
 @keyframes spin {
-  from { display: inline-block; transform: rotate(0deg); }
-  to { display: inline-block; transform: rotate(360deg); }
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 .spinner {
   display: inline-block;

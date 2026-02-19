@@ -87,55 +87,69 @@ async function ask() {
 </template>
 
 <style scoped>
-.search-panel {
-  padding: 0.5rem 0;
-}
+.search-panel { padding: 0; }
 .panel-title {
-  margin: 0 0 0.35rem 0;
-  font-size: 1rem;
+  margin: 0 0 4px 0;
+  font-size: 15px;
   font-weight: 600;
+  color: var(--text);
 }
 .hint {
-  margin: 0 0 0.75rem 0;
-  font-size: 0.8125rem;
-  color: #666;
+  margin: 0 0 10px 0;
+  font-size: 13px;
+  color: var(--text-muted);
 }
 .qa-form {
   display: flex;
-  gap: 0.5rem;
-  margin-bottom: 0.75rem;
+  gap: 6px;
+  margin-bottom: 10px;
 }
 .question-input {
   flex: 1;
-  padding: 0.5rem 0.6rem;
-  border: 1px solid #ddd;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  background: var(--bg3);
+  color: var(--text);
   border-radius: 6px;
-  font-size: 0.9375rem;
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.15s;
 }
+.question-input::placeholder { color: var(--text-dim); }
+.question-input:focus { border-color: rgba(124, 92, 252, 0.5); }
 .btn-ask {
-  padding: 0.5rem 1rem;
-  border: 1px solid #24c8db;
-  background: #24c8db;
+  padding: 7px 14px;
+  border: none;
+  background: var(--grad);
   color: #fff;
   border-radius: 6px;
   cursor: pointer;
-  font-size: 0.875rem;
+  font-size: 13px;
+  font-weight: 500;
+  font-family: inherit;
+  transition: opacity 0.15s;
+  white-space: nowrap;
 }
-.btn-ask:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
+.btn-ask:hover { opacity: 0.88; }
+.btn-ask:disabled { opacity: 0.4; cursor: not-allowed; }
 .error {
-  color: var(--color-error, #c00);
-  font-size: 0.875rem;
-  margin: 0.5rem 0;
+  color: var(--red);
+  font-size: 13px;
+  margin: 8px 0;
+  padding: 8px 10px;
+  background: rgba(248, 113, 113, 0.08);
+  border: 1px solid rgba(248, 113, 113, 0.2);
+  border-radius: 6px;
 }
 .answer-box {
-  padding: 0.75rem;
-  background: #f0f9fa;
-  border-radius: 6px;
-  font-size: 0.9375rem;
-  line-height: 1.5;
+  padding: 12px;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 14px;
+  line-height: 1.65;
   white-space: pre-wrap;
+  color: var(--text);
 }
 </style>

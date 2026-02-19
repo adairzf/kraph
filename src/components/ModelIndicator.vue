@@ -46,24 +46,20 @@ async function loadCurrentModel() {
 .model-indicator {
   display: inline-flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.3rem 0.6rem;
-  background: #e8f4f8;
-  border-radius: 4px;
-  font-size: 0.8125rem;
+  gap: 6px;
+  padding: 4px 10px;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px;
 }
-
 .label {
-  color: #666;
+  color: var(--text-dim);
   font-weight: 500;
 }
-
 .value {
-  color: #24c8db;
-  font-weight: 600;
+  color: var(--text-muted);
+  font-weight: 500;
 }
-
-.value.loading {
-  color: #999;
-}
+.value.loading { color: var(--text-dim); }
 </style>
