@@ -155,28 +155,7 @@
     }
     .dot { width: 12px; height: 12px; border-radius: 50%; }
     .dot-r { background: #ff5f57; } .dot-y { background: #febc2e; } .dot-g { background: #28c840; }
-    .mockup-content { display: grid; grid-template-columns: 200px 1fr 260px; height: 420px; font-size: 12px; }
-
-    .m-sidebar { border-right: 1px solid var(--border); padding: 12px 0; display: flex; flex-direction: column; gap: 2px; }
-    .m-sidebar-title { padding: 4px 16px 8px; color: var(--text-muted); font-size: 10px; text-transform: uppercase; letter-spacing: .08em; }
-    .m-mem-item { padding: 8px 16px; cursor: default; display: flex; flex-direction: column; gap: 3px; border-left: 2px solid transparent; }
-    .m-mem-item.active { background: rgba(124,92,252,.1); border-left-color: var(--purple); }
-    .m-mem-item .m-title { color: var(--text); font-size: 11px; font-weight: 500; }
-    .m-mem-item .m-date { color: var(--text-muted); font-size: 10px; }
-
-    .m-graph { position: relative; overflow: hidden; }
-    .m-graph svg { width: 100%; height: 100%; }
-
-    .m-entity { border-left: 1px solid var(--border); padding: 16px 14px; display: flex; flex-direction: column; gap: 12px; }
-    .m-entity-name { font-size: 14px; font-weight: 700; color: var(--text); display: flex; align-items: center; gap: 6px; }
-    .m-tag { font-size: 9px; padding: 2px 7px; border-radius: 4px; background: rgba(124,92,252,.2); color: var(--purple-light); }
-    .m-section { display: flex; flex-direction: column; gap: 5px; }
-    .m-section-label { font-size: 9px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-muted); }
-    .m-attr { display: flex; justify-content: space-between; font-size: 10px; }
-    .m-attr-k { color: var(--text-muted); } .m-attr-v { color: var(--text); font-weight: 500; }
-    .m-rel { display: flex; align-items: center; gap: 5px; font-size: 10px; padding: 5px 8px; border-radius: 6px; background: rgba(255,255,255,.04); }
-    .m-rel-line { flex: 1; height: 1px; background: var(--border); }
-    .m-rel-type { color: var(--purple-light); font-size: 9px; } .m-rel-name { color: var(--text); }
+    .mockup-screenshot { width: 100%; display: block; border-radius: 0 0 15px 15px; }
 
     /* ─── STATS ─── */
     .stats { display: flex; justify-content: center; gap: 4px; flex-wrap: wrap; padding: 0 5vw 80px; }
@@ -308,8 +287,6 @@
       .how-wrap, .privacy-inner { grid-template-columns: 1fr; }
       .ai-grid { grid-template-columns: 1fr; }
       .nav-links { display: none; }
-      .mockup-content { grid-template-columns: 1fr; }
-      .m-sidebar, .m-entity { display: none; }
     }
   </style>
 </head>
@@ -353,69 +330,7 @@
       <div class="mockup-bar">
         <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
       </div>
-      <div class="mockup-content">
-        <div class="m-sidebar">
-          <div class="m-sidebar-title" data-i18n="mockup.list">记忆列表</div>
-          <div class="m-mem-item active"><div class="m-title" data-i18n="mockup.m1">二哥在字节上班</div><div class="m-date" data-i18n="mockup.today">今天 14:32</div></div>
-          <div class="m-mem-item"><div class="m-title" data-i18n="mockup.m2">李明是我同事</div><div class="m-date" data-i18n="mockup.yesterday">昨天 09:12</div></div>
-          <div class="m-mem-item"><div class="m-title" data-i18n="mockup.m3">Alice 负责后端架构</div><div class="m-date">Feb 18</div></div>
-          <div class="m-mem-item"><div class="m-title" data-i18n="mockup.m4">Bob 和 Alice 是大学同学</div><div class="m-date">Feb 17</div></div>
-          <div class="m-mem-item"><div class="m-title" data-i18n="mockup.m5">今年夏天去了杭州</div><div class="m-date">Feb 12</div></div>
-        </div>
-        <div class="m-graph">
-          <svg viewBox="0 0 440 420" xmlns="http://www.w3.org/2000/svg">
-            <defs>
-              <radialGradient id="gn1" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="#7c5cfc" stop-opacity=".6"/><stop offset="100%" stop-color="#7c5cfc" stop-opacity=".1"/></radialGradient>
-              <radialGradient id="gn2" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="#3b82f6" stop-opacity=".6"/><stop offset="100%" stop-color="#3b82f6" stop-opacity=".1"/></radialGradient>
-              <radialGradient id="gn3" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="#34d399" stop-opacity=".6"/><stop offset="100%" stop-color="#34d399" stop-opacity=".1"/></radialGradient>
-              <radialGradient id="gn4" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="#f472b6" stop-opacity=".6"/><stop offset="100%" stop-color="#f472b6" stop-opacity=".1"/></radialGradient>
-              <marker id="arr" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="rgba(255,255,255,0.2)"/></marker>
-            </defs>
-            <line x1="220" y1="200" x2="340" y2="120" stroke="rgba(124,92,252,.4)" stroke-width="1.5" marker-end="url(#arr)"/>
-            <line x1="220" y1="200" x2="120" y2="120" stroke="rgba(59,130,246,.4)" stroke-width="1.5" marker-end="url(#arr)"/>
-            <line x1="220" y1="200" x2="100" y2="300" stroke="rgba(52,211,153,.4)" stroke-width="1.5" marker-end="url(#arr)"/>
-            <line x1="220" y1="200" x2="340" y2="300" stroke="rgba(244,114,182,.4)" stroke-width="1.5" marker-end="url(#arr)"/>
-            <line x1="340" y1="120" x2="120" y2="120" stroke="rgba(255,255,255,.1)" stroke-width="1" stroke-dasharray="4,3"/>
-            <line x1="100" y1="300" x2="340" y2="300" stroke="rgba(255,255,255,.1)" stroke-width="1" stroke-dasharray="4,3"/>
-            <text x="295" y="148" fill="rgba(255,255,255,.45)" font-size="9" text-anchor="middle" data-i18n-svg="mockup.rel1">在...上班</text>
-            <text x="155" y="148" fill="rgba(255,255,255,.45)" font-size="9" text-anchor="middle" data-i18n-svg="mockup.rel2">是...同事</text>
-            <text x="140" y="260" fill="rgba(255,255,255,.45)" font-size="9" text-anchor="middle" data-i18n-svg="mockup.rel3">认识</text>
-            <text x="300" y="260" fill="rgba(255,255,255,.45)" font-size="9" text-anchor="middle" data-i18n-svg="mockup.rel4">大学同学</text>
-            <circle cx="220" cy="200" r="40" fill="url(#gn1)" stroke="#7c5cfc" stroke-width="2"/>
-            <circle cx="220" cy="200" r="32" fill="rgba(124,92,252,.15)" stroke="rgba(124,92,252,.5)" stroke-width="1.5"><animate attributeName="r" values="32;36;32" dur="3s" repeatCount="indefinite"/><animate attributeName="stroke-opacity" values=".5;.2;.5" dur="3s" repeatCount="indefinite"/></circle>
-            <text x="220" y="196" fill="#e8e8f0" font-size="11" text-anchor="middle" font-weight="700" data-i18n-svg="mockup.node1">李明</text>
-            <text x="220" y="210" fill="#a78bfa" font-size="8.5" text-anchor="middle" data-i18n-svg="mockup.node1alias">别名: 我二哥</text>
-            <circle cx="340" cy="120" r="26" fill="url(#gn4)" stroke="#f472b6" stroke-width="1.5"/>
-            <text x="340" y="124" fill="#e8e8f0" font-size="10" text-anchor="middle" font-weight="600" data-i18n-svg="mockup.node2">富土康</text>
-            <circle cx="120" cy="120" r="22" fill="url(#gn2)" stroke="#3b82f6" stroke-width="1.5"/>
-            <text x="120" y="124" fill="#e8e8f0" font-size="10" text-anchor="middle" font-weight="600" data-i18n-svg="mockup.node3">我</text>
-            <circle cx="100" cy="300" r="24" fill="url(#gn3)" stroke="#34d399" stroke-width="1.5"/>
-            <text x="100" y="304" fill="#e8e8f0" font-size="10" text-anchor="middle" font-weight="600">Alice</text>
-            <circle cx="340" cy="300" r="22" fill="url(#gn2)" stroke="#3b82f6" stroke-width="1.5"/>
-            <text x="340" y="304" fill="#e8e8f0" font-size="10" text-anchor="middle" font-weight="600">Bob</text>
-            <rect x="8" y="8" width="120" height="20" rx="4" fill="rgba(124,92,252,.15)" stroke="rgba(124,92,252,.3)" stroke-width="1"/>
-            <text x="14" y="22" fill="#a78bfa" font-size="9" data-i18n-svg="mockup.graphLabel">🔍 知识图谱视图</text>
-          </svg>
-        </div>
-        <div class="m-entity">
-          <div class="m-entity-name"><span data-i18n-svg="mockup.node1">李明</span> <span class="m-tag" data-i18n="mockup.person">人物</span></div>
-          <div class="m-section">
-            <div class="m-section-label" data-i18n="mockup.attrs">属性</div>
-            <div class="m-attr"><span class="m-attr-k" data-i18n="mockup.alias">别名</span><span class="m-attr-v" data-i18n="mockup.aliasVal">我二哥</span></div>
-            <div class="m-attr"><span class="m-attr-k" data-i18n="mockup.job">职业</span><span class="m-attr-v" data-i18n="mockup.jobVal">工程师</span></div>
-            <div class="m-attr"><span class="m-attr-k" data-i18n="mockup.company">公司</span><span class="m-attr-v" data-i18n-svg="mockup.node2">富土康</span></div>
-          </div>
-          <div class="m-section">
-            <div class="m-section-label" data-i18n="mockup.relations">关系</div>
-            <div class="m-rel"><span class="m-rel-name" data-i18n="mockup.node3">我</span><span class="m-rel-line"></span><span class="m-rel-type" data-i18n="mockup.rel2">同事</span><span class="m-rel-line"></span><span class="m-rel-name" data-i18n-svg="mockup.node1">李明</span></div>
-            <div class="m-rel"><span class="m-rel-name" data-i18n-svg="mockup.node1">李明</span><span class="m-rel-line"></span><span class="m-rel-type" data-i18n="mockup.worksAt">就职于</span><span class="m-rel-line"></span><span class="m-rel-name" data-i18n-svg="mockup.node2">富土康</span></div>
-          </div>
-          <div class="m-section">
-            <div class="m-section-label" data-i18n="mockup.memories">相关记忆 (2)</div>
-            <div style="font-size:10px;color:var(--text-muted);line-height:1.6;" data-i18n-html="mockup.memList">· 李明是我二哥<br/>· 我二哥在字节上班</div>
-          </div>
-        </div>
-      </div>
+      <img class="mockup-screenshot" src="ScreenShot_2026-02-19_160822_386.png" alt="Kraph 应用截图" />
     </div>
   </div>
 </section>
