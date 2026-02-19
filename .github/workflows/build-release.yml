@@ -12,9 +12,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: macos-14        # Apple Silicon (M1/M2/M3/M4)
-          - platform: macos-13        # Intel x64
+          - platform: macos-latest    # Apple Silicon (M1/M2/M3/M4)
+            args: --target aarch64-apple-darwin
+            rust-target: aarch64-apple-darwin
+          - platform: macos-latest    # Intel x64（交叉编译）
+            args: --target x86_64-apple-darwin
+            rust-target: x86_64-apple-darwin
           - platform: windows-latest  # Windows x64
+            args: ''
+            rust-target: ''
 
     runs-on: ${{ matrix.platform }}
 
@@ -31,6 +37,8 @@ jobs:
           cache: pnpm
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-target }}
 
       - uses: swatinem/rust-cache@v2
         with:
@@ -61,6 +69,7 @@ jobs:
             > ⚠️ Windows SmartScreen 警告：更多信息 → 仍要运行
           releaseDraft: false
           prerelease: false
+          args: ${{ matrix.args }}
 
   # ── 同步到 Gitee ────────────────────────────────────────────
   sync-gitee:
