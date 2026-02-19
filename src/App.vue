@@ -15,6 +15,15 @@ import { useOllamaStore } from './stores/ollamaStore'
 import { checkOllama, getModelConfig, openMemoriesFolder, cleanupDatabase, clearAllData } from './utils/tauriApi'
 import { onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { useI18n } from 'vue-i18n'
+
+const { t, locale } = useI18n()
+
+function toggleLocale() {
+  const next = locale.value === 'zh-CN' ? 'en-US' : 'zh-CN'
+  locale.value = next
+  localStorage.setItem('app-locale', next)
+}
 
 const editorContent = ref('')
 const centerView = ref<'edit' | 'timeline' | 'qa' | 'settings'>('qa')
@@ -79,18 +88,18 @@ async function onCleanupDatabase() {
     await graphStore.fetchGraph()
     ElMessage.success(msg)
   } catch (e) {
-    ElMessage.error('清理失败: ' + (e instanceof Error ? e.message : String(e)))
+    ElMessage.error(t('app.errors.cleanupFailed') + (e instanceof Error ? e.message : String(e)))
   }
 }
 
 async function onClearAllData() {
   try {
     await ElMessageBox.confirm(
-      '此操作将永久删除所有记忆、实体、关系数据，是否继续？',
-      '⚠️ 危险操作',
+      t('app.clearAllConfirm.message'),
+      t('app.clearAllConfirm.title'),
       {
-        confirmButtonText: '确定清空',
-        cancelButtonText: '取消',
+        confirmButtonText: t('app.clearAllConfirm.confirm'),
+        cancelButtonText: t('app.clearAllConfirm.cancel'),
         type: 'warning',
         confirmButtonClass: 'el-button--danger'
       }
@@ -100,11 +109,10 @@ async function onClearAllData() {
     await graphStore.fetchGraph()
     ElMessage.success(msg)
     
-    // 刷新页面
     window.location.reload()
   } catch (e) {
     if (e !== 'cancel') {
-      ElMessage.error('清空失败: ' + (e instanceof Error ? e.message : String(e)))
+      ElMessage.error(t('app.errors.clearAllFailed') + (e instanceof Error ? e.message : String(e)))
     }
   }
 }
@@ -114,11 +122,11 @@ async function onClearAllData() {
 <template>
   <div class="app">
     <header class="header">
-      <h1 class="title">记忆 · 知识图谱</h1>
+      <h1 class="title">{{ t('app.title') }}</h1>
       <div class="header-actions">
         <ModelIndicator />
 
-        <!-- Ollama 一体化状态按钮：仅在使用 Ollama 提供商时显示 -->
+        <!-- Ollama 状态按钮：仅在使用 Ollama 提供商时显示 -->
         <button
           v-if="isOllamaProvider || ollamaChecking"
           type="button"
@@ -128,36 +136,35 @@ async function onClearAllData() {
             'status-ok': !ollamaChecking && ollamaRunning,
             'status-warn': !ollamaChecking && !ollamaRunning,
           }"
-          :title="ollamaChecking ? '正在检测 Ollama 状态...' : ollamaRunning ? '点击重新检测/初始化 Ollama' : '点击一键初始化 Ollama'"
+          :title="ollamaChecking ? t('app.header.ollamaChecking') : ollamaRunning ? t('app.header.ollamaReadyTitle') : t('app.header.ollamaNotReadyTitle')"
           @click="openSetupDialog"
         >
-          <span v-if="ollamaChecking">⏳ 检测中…</span>
-          <span v-else-if="ollamaRunning">✓ Ollama 已就绪</span>
-          <span v-else>⚡ 初始化 Ollama</span>
+          <span v-if="ollamaChecking">{{ t('app.header.ollamaStatusChecking') }}</span>
+          <span v-else-if="ollamaRunning">{{ t('app.header.ollamaStatusOk') }}</span>
+          <span v-else>{{ t('app.header.ollamaStatusWarn') }}</span>
         </button>
 
-        <!-- <button
-          type="button"
-          class="btn-cleanup"
-          @click="onCleanupDatabase"
-          title="清理数据库脏数据"
-        >
-          🧹 清理数据库
-        </button> -->
         <button
           type="button"
           class="btn-clear-all"
           @click="onClearAllData"
-          title="清空所有数据（危险操作）"
+          :title="t('app.header.clearAllDataTitle')"
         >
-          ⚠️ 清空数据
+          {{ t('app.header.clearAllData') }}
         </button>
         <button
           type="button"
           class="btn-open-memories"
           @click="onOpenMemoriesFolder"
         >
-          打开记忆文件夹
+          {{ t('app.header.openMemoriesFolder') }}
+        </button>
+        <button
+          type="button"
+          class="btn-lang"
+          @click="toggleLocale"
+        >
+          {{ t('app.langSwitch') }}
         </button>
       </div>
 
@@ -166,10 +173,10 @@ async function onClearAllData() {
     </header>
     <div class="main">
       <aside class="sidebar left" :class="{ collapsed: leftSidebarCollapsed }">
-        <button 
-          class="collapse-btn" 
+        <button
+          class="collapse-btn"
           @click="leftSidebarCollapsed = !leftSidebarCollapsed"
-          :title="leftSidebarCollapsed ? '展开记忆列表' : '收起记忆列表'"
+          :title="leftSidebarCollapsed ? t('app.header.expandMemoryList') : t('app.header.collapseMemoryList')"
         >
           {{ leftSidebarCollapsed ? '→' : '←' }}
         </button>
@@ -180,21 +187,21 @@ async function onClearAllData() {
       <section class="center" :class="{ 'left-collapsed': leftSidebarCollapsed }">
         <InputPanel v-model="editorContent" />
         <div class="center-tabs">
-        <button
+          <button
             type="button"
             class="tab"
             :class="{ active: centerView === 'qa' }"
             @click="centerView = 'qa'"
-        >
-            问答
-        </button>
+          >
+            {{ t('app.tabs.qa') }}
+          </button>
           <button
             type="button"
             class="tab"
             :class="{ active: centerView === 'edit' }"
             @click="centerView = 'edit'"
           >
-            编辑
+            {{ t('app.tabs.edit') }}
           </button>
           <button
             type="button"
@@ -202,17 +209,8 @@ async function onClearAllData() {
             :class="{ active: centerView === 'settings' }"
             @click="centerView = 'settings'"
           >
-            ⚙️ 设置
+            {{ t('app.tabs.settings') }}
           </button>
-          <!-- <button
-            type="button"
-            class="tab"
-            :class="{ active: centerView === 'timeline' }"
-            @click="centerView = 'timeline'"
-          >
-            时间轴
-          </button> -->
-          
         </div>
         <div class="center-content">
           <EditorPanel v-show="centerView === 'edit'" />
@@ -226,11 +224,11 @@ async function onClearAllData() {
           <input
             v-model="searchName"
             type="text"
-            placeholder="搜索人物/实体…"
+            :placeholder="t('app.search.placeholder')"
             class="search-input"
             @keyup.enter="onSearchEntity"
           />
-          <button type="button" class="btn-search" @click="onSearchEntity">搜索</button>
+          <button type="button" class="btn-search" @click="onSearchEntity">{{ t('app.search.button') }}</button>
         </div>
         <div class="graph-container">
           <GraphPanel />
@@ -360,6 +358,20 @@ async function onClearAllData() {
 }
 .btn-clear-all:hover {
   background: #ffebee;
+}
+.btn-lang {
+  padding: 0.4rem 0.75rem;
+  font-size: 0.8125rem;
+  border: 1px solid #24c8db;
+  background: #fff;
+  color: #24c8db;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+}
+.btn-lang:hover {
+  background: #e8f9fb;
 }
 .main {
   flex: 1;

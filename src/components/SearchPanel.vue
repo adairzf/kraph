@@ -3,6 +3,9 @@ import { ref } from 'vue'
 import { ElMessageBox } from 'element-plus'
 import { answerQuestion } from '../utils/tauriApi'
 import { useOllamaStore } from '../stores/ollamaStore'
+import { useI18n } from 'vue-i18n'
+
+const { t } = useI18n()
 
 const question = ref('')
 const answer = ref('')
@@ -33,15 +36,14 @@ async function ask() {
     const errMsg = e instanceof Error ? e.message : String(e)
     error.value = errMsg
 
-    // 检测到 Ollama 服务异常，询问用户是否运行一键初始化
     if (isOllamaError(errMsg)) {
       try {
         await ElMessageBox.confirm(
-          '检测到 Ollama 服务异常，是否立即运行一键初始化？\n（将自动完成安装检测、服务启动、模型下载）',
-          'Ollama 服务异常',
+          t('searchPanel.ollamaError.message'),
+          t('searchPanel.ollamaError.title'),
           {
-            confirmButtonText: '立即初始化',
-            cancelButtonText: '忽略',
+            confirmButtonText: t('searchPanel.ollamaError.confirm'),
+            cancelButtonText: t('searchPanel.ollamaError.cancel'),
             type: 'warning',
           },
         )
@@ -58,14 +60,14 @@ async function ask() {
 
 <template>
   <div class="search-panel">
-    <h2 class="panel-title">智能问答</h2>
-    <p class="hint">基于已记录的记忆回答，例如：「李明是谁？」</p>
+    <h2 class="panel-title">{{ t('searchPanel.title') }}</h2>
+    <p class="hint">{{ t('searchPanel.hint') }}</p>
     <div class="qa-form">
       <input
         v-model="question"
         type="text"
         class="question-input"
-        placeholder="输入问题…"
+        :placeholder="t('searchPanel.placeholder')"
         @keyup.enter="ask"
       />
       <button
@@ -74,7 +76,7 @@ async function ask() {
         :disabled="loading || !question.trim()"
         @click="ask"
       >
-        {{ loading ? '思考中…' : '提问' }}
+        {{ loading ? t('searchPanel.thinking') : t('searchPanel.ask') }}
       </button>
     </div>
     <p v-if="error" class="error">{{ error }}</p>

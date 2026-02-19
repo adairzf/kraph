@@ -2,6 +2,9 @@
 import { ref, nextTick, onUnmounted } from 'vue'
 import { listen, type Event as TauriEvent } from '@tauri-apps/api/event'
 import { runOllamaSetup } from '../utils/tauriApi'
+import { useI18n } from 'vue-i18n'
+
+const { t } = useI18n()
 
 interface LogEntry {
   id: number
@@ -76,13 +79,12 @@ async function openAndStart() {
     },
   )
 
-  // 启动后端初始化流程
   try {
     await runOllamaSetup()
   } catch (e) {
     logs.value.push({
       id: ++counter,
-      message: `初始化出错: ${e instanceof Error ? e.message : String(e)}`,
+      message: t('ollamaSetup.errors.initFailed') + (e instanceof Error ? e.message : String(e)),
       status: 'error',
     })
     isRunning.value = false
@@ -107,37 +109,35 @@ defineExpose({ openAndStart })
 <template>
   <el-dialog
     v-model="visible"
-    title="Ollama 一键初始化"
+    :title="t('ollamaSetup.title')"
     width="580px"
     :close-on-click-modal="false"
     :close-on-press-escape="!isRunning"
     @closed="cleanup"
   >
     <div class="setup-body">
-      <!-- 顶部状态提示 -->
       <div class="setup-status" :class="{ running: isRunning, success: isDone && isSuccess, failed: isDone && !isSuccess }">
         <template v-if="isRunning">
           <span class="spinner-icon">◌</span>
-          正在自动检查并配置 Ollama 环境，请稍候...
+          {{ t('ollamaSetup.status.running') }}
         </template>
         <template v-else-if="isDone && isSuccess">
-          🎉 初始化完成！Ollama 已就绪，可以开始使用。
+          {{ t('ollamaSetup.status.success') }}
         </template>
         <template v-else-if="isDone">
-          ⚠️ 初始化未完全成功，请查看日志了解详情。
+          {{ t('ollamaSetup.status.failed') }}
         </template>
         <template v-else>
-          点击"开始初始化"自动完成所有配置步骤。
+          {{ t('ollamaSetup.status.idle') }}
         </template>
       </div>
 
-      <!-- 步骤说明（仅在未开始时显示） -->
       <div v-if="!isRunning && !isDone" class="setup-steps">
-        <p>将依次执行以下步骤（已完成的步骤自动跳过）：</p>
+        <p>{{ t('ollamaSetup.steps.intro') }}</p>
         <ol>
-          <li>检查 Ollama 是否已安装（未安装则下载安装程序）</li>
-          <li>检查 Ollama 服务是否运行（未运行则自动启动）</li>
-          <li>检查所需模型是否已下载（未下载则自动拉取）</li>
+          <li>{{ t('ollamaSetup.steps.checkInstall') }}</li>
+          <li>{{ t('ollamaSetup.steps.checkService') }}</li>
+          <li>{{ t('ollamaSetup.steps.checkModel') }}</li>
         </ol>
       </div>
 
@@ -165,17 +165,17 @@ defineExpose({ openAndStart })
           type="primary"
           @click="openAndStart"
         >
-          重新初始化
+          {{ t('ollamaSetup.buttons.retry') }}
         </el-button>
         <el-button
           v-if="!isRunning && !isDone"
           type="primary"
           @click="openAndStart"
         >
-          开始初始化
+          {{ t('ollamaSetup.buttons.start') }}
         </el-button>
         <el-button @click="handleClose" :type="isDone && isSuccess ? 'primary' : 'default'">
-          {{ isDone ? '完成' : '关闭' }}
+          {{ isDone ? t('ollamaSetup.buttons.done') : t('ollamaSetup.buttons.close') }}
         </el-button>
       </div>
     </template>

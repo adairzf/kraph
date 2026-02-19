@@ -4,6 +4,7 @@ import { listen } from '@tauri-apps/api/event'
 import { useMemoryStore } from '../stores/memoryStore'
 import { useGraphStore } from '../stores/graphStore'
 import { setupWhisper, transcribeAudio } from '../utils/tauriApi'
+import { useI18n } from 'vue-i18n'
 
 interface SaveProgressStep {
   message: string
@@ -14,6 +15,7 @@ const emit = defineEmits<{ (e: 'update:modelValue', v: string): void }>()
 const props = defineProps<{ modelValue: string }>()
 const memoryStore = useMemoryStore()
 const graphStore = useGraphStore()
+const { t } = useI18n()
 const saving = ref(false)
 const saveProgress = ref<SaveProgressStep[]>([])
 const recording = ref(false)
@@ -40,15 +42,15 @@ const pcmChunks: Float32Array[] = []
 async function requestMicPermission(): Promise<boolean> {
   try {
     if (!navigator.mediaDevices?.getUserMedia) {
-      voiceError.value = '当前环境不支持麦克风权限请求'
+      voiceError.value = t('inputPanel.errors.micNotSupported')
       return false
     }
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-    stream.getTracks().forEach((t) => t.stop())
+    stream.getTracks().forEach((track) => track.stop())
     return true
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
-    voiceError.value = `麦克风权限未授权（请到系统设置中允许本应用访问麦克风）: ${msg}`
+    voiceError.value = t('inputPanel.errors.micPermissionDenied', { msg })
     return false
   }
 }
@@ -111,7 +113,7 @@ function uint8ToBase64(bytes: Uint8Array): string {
 async function transcribeWithTimeout(audioBase64: string, timeoutMs = 130000): Promise<string> {
   return new Promise((resolve, reject) => {
     const timer = window.setTimeout(() => {
-      reject(new Error('转写超时，请重试（可缩短录音时长）'))
+      reject(new Error(t('inputPanel.errors.transcribeTimeout')))
     }, timeoutMs)
     transcribeAudio(audioBase64)
       .then((res) => {
@@ -129,7 +131,7 @@ async function startPcmRecording() {
   mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true })
   const Ctx = (window.AudioContext || (window as any).webkitAudioContext) as typeof AudioContext
   if (!Ctx) {
-    throw new Error('当前环境不支持 AudioContext')
+    throw new Error(t('inputPanel.errors.audioContextNotSupported'))
   }
 
   audioContext = new Ctx()
@@ -166,7 +168,7 @@ async function stopPcmRecordingAndTranscribe() {
   if (!pcm.length) return
 
   transcribing.value = true
-  whisperProgress.value = '正在进行语音转文字，请稍候'
+  whisperProgress.value = t('inputPanel.whisper.transcribing')
   try {
     const wavBytes = encodeWavFromFloat32(pcm, sr)
     const audioBase64 = uint8ToBase64(wavBytes)
@@ -185,23 +187,23 @@ async function stopPcmRecordingAndTranscribe() {
 async function ensureWhisperReady(): Promise<boolean> {
   if (whisperReady.value) return true
   preparingWhisper.value = true
-  whisperProgress.value = '正在初始化 Whisper（首次会自动安装与下载模型）'
+  whisperProgress.value = t('inputPanel.whisper.initializing')
   let dot = 0
   whisperProgressTimer = window.setInterval(() => {
     dot = (dot + 1) % 4
-    whisperProgress.value = `正在初始化 Whisper${'.'.repeat(dot)}`
+    whisperProgress.value = t('inputPanel.whisper.initializing').split('（')[0] + '.'.repeat(dot)
   }, 500)
   try {
     await setupWhisper()
     whisperReady.value = true
-    whisperProgress.value = 'Whisper 已就绪'
+    whisperProgress.value = t('inputPanel.whisper.ready')
     window.setTimeout(() => {
       if (!recording.value && !transcribing.value) whisperProgress.value = ''
     }, 1200)
     return true
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
-    voiceError.value = `Whisper 初始化失败：${msg}`
+    voiceError.value = t('inputPanel.whisper.initFailed', { msg })
     whisperProgress.value = ''
     return false
   } finally {
@@ -226,7 +228,7 @@ async function toggleVoice() {
       recording.value = false
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
-      voiceError.value = `语音转写失败：${msg}`
+      voiceError.value = t('inputPanel.errors.transcribeFailed', { msg })
       recording.value = false
       whisperProgress.value = ''
     }
@@ -239,7 +241,7 @@ async function toggleVoice() {
       await startPcmRecording()
       recording.value = true
     } catch (e) {
-      voiceError.value = e instanceof Error ? e.message : '启动语音识别失败'
+      voiceError.value = e instanceof Error ? e.message : t('inputPanel.errors.voiceStartFailed')
       recording.value = false
       whisperProgress.value = ''
     }
@@ -281,7 +283,7 @@ async function handleSave() {
     <textarea
       v-model="text"
       class="textarea"
-      placeholder="输入要记录的内容，或使用语音输入…"
+      :placeholder="t('inputPanel.placeholder')"
       rows="4"
       @input="onInput"
     />
@@ -291,14 +293,14 @@ async function handleSave() {
         type="button"
         class="btn voice"
         :class="{ active: recording }"
-        :title="recording ? '停止录音并转写' : '开始录音（Whisper）'"
+        :title="recording ? t('inputPanel.voiceStopTitle') : t('inputPanel.voiceStartTitle')"
         :disabled="transcribing || preparingWhisper"
         @click="toggleVoice"
       >
-        {{ preparingWhisper ? '⚙️ 初始化…' : (transcribing ? '⏳ 转写中…' : (recording ? '⏹ 停止' : '🎤 语音')) }}
+        {{ preparingWhisper ? t('inputPanel.voiceInit') : (transcribing ? t('inputPanel.voiceTranscribing') : (recording ? t('inputPanel.voiceStop') : t('inputPanel.voiceStart'))) }}
       </button>
       <button class="btn primary" :disabled="saving || !text.trim()" @click="handleSave">
-        {{ saving ? '保存中…' : '保存记忆' }}
+        {{ saving ? t('inputPanel.saving') : t('inputPanel.save') }}
       </button>
     </div>
     <p v-if="whisperProgress" class="voice-progress">{{ whisperProgress }}</p>

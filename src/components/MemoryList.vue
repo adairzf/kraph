@@ -2,6 +2,9 @@
 import { computed, onMounted } from 'vue'
 import { useMemoryStore } from '../stores/memoryStore'
 import type { Memory } from '../types/memory'
+import { useI18n } from 'vue-i18n'
+
+const { t } = useI18n()
 
 const memoryStore = useMemoryStore()
 const list = computed(() => memoryStore.memories)
@@ -21,8 +24,8 @@ function preview(content: string) {
 
 <template>
   <div class="memory-list">
-    <h2 class="panel-title">记忆列表</h2>
-    <p v-if="memoryStore.loading" class="loading">加载中…</p>
+    <h2 class="panel-title">{{ t('memoryList.title') }}</h2>
+    <p v-if="memoryStore.loading" class="loading">{{ t('memoryList.loading') }}</p>
     <p v-else-if="memoryStore.error" class="error">{{ memoryStore.error }}</p>
     <ul v-else class="list">
       <li

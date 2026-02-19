@@ -3,6 +3,9 @@ import { ref, watch } from 'vue'
 import { getCharacterProfile, queryEntity } from '../utils/tauriApi'
 import type { Entity } from '../types/entity'
 import type { Memory } from '../types/memory'
+import { useI18n } from 'vue-i18n'
+
+const { t } = useI18n()
 
 const props = defineProps<{ entityId: number | null; entityName: string | null }>()
 
@@ -45,7 +48,7 @@ async function loadByEntityName(name: string) {
       profile.value = await getCharacterProfile(entity.id)
     } else {
       profile.value = null
-      error.value = '未找到该实体'
+      error.value = t('characterCard.notFound')
     }
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e)
@@ -109,8 +112,8 @@ function parseAttributes(attributes: string | null | undefined): string[] {
 
 <template>
   <div class="character-card">
-    <h3 class="card-title">角色档案</h3>
-    <p v-if="loading" class="loading">加载中…</p>
+    <h3 class="card-title">{{ t('characterCard.title') }}</h3>
+    <p v-if="loading" class="loading">{{ t('characterCard.loading') }}</p>
     <p v-else-if="error" class="error">{{ error }}</p>
     <template v-else-if="profile">
       <div class="entity-header">
@@ -127,7 +130,7 @@ function parseAttributes(attributes: string | null | undefined): string[] {
         </div>
       </div>
       <div v-if="profile.relations.length" class="section">
-        <h4>关系</h4>
+        <h4>{{ t('characterCard.relations') }}</h4>
         <ul class="relations">
           <li v-for="(r, i) in profile.relations" :key="i" class="relation-item">
             <span
@@ -143,7 +146,7 @@ function parseAttributes(attributes: string | null | undefined): string[] {
         </ul>
       </div>
       <div class="section">
-        <h4>相关记忆 ({{ profile.memories.length }})</h4>
+        <h4>{{ t('characterCard.relatedMemories', { count: profile.memories.length }) }}</h4>
         <ul class="memories">
           <li
             v-for="m in profile.memories.slice(0, 5)"
@@ -155,7 +158,7 @@ function parseAttributes(attributes: string | null | undefined): string[] {
         </ul>
       </div>
     </template>
-    <p v-else class="hint">在右侧图谱点击节点，或在上方搜索实体名称查看档案。</p>
+    <p v-else class="hint">{{ t('characterCard.hint') }}</p>
   </div>
 </template>
 

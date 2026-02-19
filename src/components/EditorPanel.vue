@@ -5,6 +5,9 @@ import { useGraphStore } from '../stores/graphStore'
 import type { Memory } from '../types/memory'
 import { marked } from 'marked'
 import { ElMessageBox, ElMessage } from 'element-plus'
+import { useI18n } from 'vue-i18n'
+
+const { t } = useI18n()
 
 const memoryStore = useMemoryStore()
 const graphStore = useGraphStore()
@@ -28,11 +31,10 @@ async function handleSave() {
   saving.value = true
   try {
     await memoryStore.updateMemoryContent(memoryStore.currentMemory.id, content.value.trim())
-    // 更新后重新获取图谱数据
     await graphStore.fetchGraph()
-    ElMessage.success('保存成功')
+    ElMessage.success(t('editorPanel.saveSuccess'))
   } catch (e) {
-    ElMessage.error('保存失败: ' + (e instanceof Error ? e.message : String(e)))
+    ElMessage.error(t('editorPanel.saveFailed') + (e instanceof Error ? e.message : String(e)))
   } finally {
     saving.value = false
   }
@@ -43,35 +45,28 @@ async function handleDelete() {
   
   try {
     await ElMessageBox.confirm(
-      '确定要删除这条记忆吗？此操作不可恢复。',
-      '确认删除',
+      t('editorPanel.deleteConfirm.message'),
+      t('editorPanel.deleteConfirm.title'),
       {
-        confirmButtonText: '确认删除',
-        cancelButtonText: '取消',
+        confirmButtonText: t('editorPanel.deleteConfirm.confirm'),
+        cancelButtonText: t('editorPanel.deleteConfirm.cancel'),
         type: 'warning',
         confirmButtonClass: 'el-button--danger'
       }
     )
     
-    // 用户确认删除
     deleting.value = true
     try {
-      console.log('开始删除记忆，ID:', memoryStore.currentMemory.id)
-      await memoryStore.deleteMemoryById(memoryStore.currentMemory.id)
-      console.log('删除成功，开始刷新图谱')
-      // 删除后重新获取图谱数据
+      await memoryStore.deleteMemoryById(memoryStore.currentMemory!.id)
       await graphStore.fetchGraph()
-      console.log('图谱刷新完成')
-      ElMessage.success('删除成功')
+      ElMessage.success(t('editorPanel.deleteSuccess'))
     } catch (e) {
-      console.error('删除失败:', e)
-      ElMessage.error('删除失败: ' + (e instanceof Error ? e.message : String(e)))
+      ElMessage.error(t('editorPanel.deleteFailed') + (e instanceof Error ? e.message : String(e)))
     } finally {
       deleting.value = false
     }
   } catch {
-    // 用户取消删除
-    console.log('用户取消删除')
+    // user cancelled
   }
 }
 </script>
@@ -86,7 +81,7 @@ async function handleDelete() {
           :class="{ active: !previewMode }"
           @click="previewMode = false"
         >
-          编辑
+          {{ t('editorPanel.edit') }}
         </button>
         <button
           type="button"
@@ -94,7 +89,7 @@ async function handleDelete() {
           :class="{ active: previewMode }"
           @click="previewMode = true"
         >
-          预览
+          {{ t('editorPanel.preview') }}
         </button>
       </div>
       <div v-if="memoryStore.currentMemory" class="actions">
@@ -104,7 +99,7 @@ async function handleDelete() {
           :disabled="saving || !content.trim()"
           @click="handleSave"
         >
-          {{ saving ? '保存中…' : '保存' }}
+          {{ saving ? t('editorPanel.saving') : t('editorPanel.save') }}
         </button>
         <button
           type="button"
@@ -112,19 +107,19 @@ async function handleDelete() {
           :disabled="deleting"
           @click="handleDelete"
         >
-          {{ deleting ? '删除中…' : '删除' }}
+          {{ deleting ? t('editorPanel.deleting') : t('editorPanel.delete') }}
         </button>
       </div>
     </div>
     <div v-if="!memoryStore.currentMemory" class="empty">
-      从左侧选择一条记忆，或在上方输入新内容并保存。
+      {{ t('editorPanel.empty') }}
     </div>
     <template v-else>
       <textarea
         v-if="!previewMode"
         v-model="content"
         class="textarea"
-        placeholder="内容"
+        :placeholder="t('editorPanel.placeholder')"
       />
       <div
         v-else

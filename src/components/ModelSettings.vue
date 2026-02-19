@@ -4,6 +4,9 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { getModelConfig, updateModelConfig, testModelConfig } from '../utils/tauriApi'
 import type { ModelConfig, ModelProviderType, OllamaProvider, DeepSeekProvider, OpenAIProvider } from '../types/model-config'
 import { DEFAULT_OLLAMA_CONFIG, DEFAULT_DEEPSEEK_CONFIG, DEFAULT_OPENAI_CONFIG } from '../types/model-config'
+import { useI18n } from 'vue-i18n'
+
+const { t } = useI18n()
 
 const loading = ref(false)
 const testing = ref(false)
@@ -31,7 +34,6 @@ async function loadConfig() {
     config.value = savedConfig
     providerType.value = savedConfig.provider.type
     
-    // 根据类型填充表单
     if (savedConfig.provider.type === 'ollama') {
       ollamaForm.value = { ...savedConfig.provider as OllamaProvider }
     } else if (savedConfig.provider.type === 'deepseek') {
@@ -40,7 +42,7 @@ async function loadConfig() {
       openaiForm.value = { ...savedConfig.provider as OpenAIProvider }
     }
   } catch (error) {
-    ElMessage.error('加载配置失败: ' + String(error))
+    ElMessage.error(t('modelSettings.messages.loadFailed') + String(error))
   } finally {
     loading.value = false
   }
@@ -59,10 +61,9 @@ function getCurrentProvider(): OllamaProvider | DeepSeekProvider | OpenAIProvide
 async function handleSave() {
   const provider = getCurrentProvider()
   
-  // 验证必填字段
   if (providerType.value === 'deepseek' || providerType.value === 'openai') {
     if (!(provider as DeepSeekProvider | OpenAIProvider).api_key) {
-      ElMessage.warning('请填写 API Key')
+      ElMessage.warning(t('modelSettings.messages.fillApiKey'))
       return
     }
   }
@@ -77,9 +78,9 @@ async function handleSave() {
     
     await updateModelConfig(newConfig)
     config.value = newConfig
-    ElMessage.success('配置已保存')
+    ElMessage.success(t('modelSettings.messages.saved'))
   } catch (error) {
-    ElMessage.error('保存失败: ' + String(error))
+    ElMessage.error(t('modelSettings.messages.saveFailed') + String(error))
   } finally {
     loading.value = false
   }
@@ -90,7 +91,7 @@ async function handleTest() {
   
   if (providerType.value === 'deepseek' || providerType.value === 'openai') {
     if (!(provider as DeepSeekProvider | OpenAIProvider).api_key) {
-      ElMessage.warning('请填写 API Key')
+      ElMessage.warning(t('modelSettings.messages.fillApiKey'))
       return
     }
   }
@@ -105,12 +106,12 @@ async function handleTest() {
     
     const response = await testModelConfig(testConfig)
     await ElMessageBox.alert(
-      `测试成功！模型响应：\n${response}`,
-      '测试结果',
+      t('modelSettings.messages.testSuccess') + response,
+      t('modelSettings.messages.testResultTitle'),
       { type: 'success' }
     )
   } catch (error) {
-    ElMessage.error('测试失败: ' + String(error))
+    ElMessage.error(t('modelSettings.messages.testFailed') + String(error))
   } finally {
     testing.value = false
   }
@@ -129,24 +130,23 @@ function handleReset() {
 }
 
 function getCurrentProviderInfo(): string {
-  if (!config.value.provider) return '未配置'
+  if (!config.value.provider) return t('modelSettings.currentModel.notConfigured')
   
   if (config.value.provider.type === 'ollama') {
-    return '当前使用：本地 Ollama 模型'
+    return t('modelSettings.currentModel.localOllama')
   } else if (config.value.provider.type === 'deepseek') {
-    return '当前使用：DeepSeek API'
+    return t('modelSettings.currentModel.deepseek')
   } else if (config.value.provider.type === 'openai') {
-    return '当前使用：OpenAI API'
+    return t('modelSettings.currentModel.openai')
   }
-  return '未知提供商'
+  return t('modelSettings.currentModel.unknown')
 }
 </script>
 
 <template>
   <div class="model-settings">
-    <h2>模型配置</h2>
+    <h2>{{ t('modelSettings.title') }}</h2>
     
-    <!-- 当前使用的模型提示 -->
     <el-alert
       v-if="config.provider"
       :title="getCurrentProviderInfo()"
@@ -157,64 +157,65 @@ function getCurrentProviderInfo(): string {
       <template #default>
         <div class="current-model-details">
           <div v-if="config.provider.type === 'ollama'">
-            <p>🖥️ <strong>本地模型</strong>（数据不会上传云端）</p>
-            <p>服务地址: {{ config.provider.base_url }}</p>
-            <p>问答模型: {{ config.provider.model_name }}</p>
-            <p>提取模型: {{ config.provider.extract_model_name }}</p>
+            <p>{{ t('modelSettings.localModelNote') }}</p>
+            <p>{{ t('modelSettings.serviceUrl') }} {{ config.provider.base_url }}</p>
+            <p>{{ t('modelSettings.qaModel') }} {{ config.provider.model_name }}</p>
+            <p>{{ t('modelSettings.extractModel') }} {{ config.provider.extract_model_name }}</p>
           </div>
           <div v-else-if="config.provider.type === 'deepseek'">
-            <p>🌐 <strong>DeepSeek API</strong>（云端处理）</p>
-            <p>模型: {{ config.provider.model_name }}</p>
-            <p>API地址: {{ config.provider.base_url }}</p>
+            <p>🌐 <strong>DeepSeek API</strong>（{{ t('modelSettings.cloudProcessing') }}）</p>
+            <p>{{ t('modelSettings.model') }} {{ config.provider.model_name }}</p>
+            <p>{{ t('modelSettings.apiUrl') }} {{ config.provider.base_url }}</p>
           </div>
           <div v-else-if="config.provider.type === 'openai'">
-            <p>🔥 <strong>OpenAI API</strong>（云端处理）</p>
-            <p>模型: {{ config.provider.model_name }}</p>
-            <p>API地址: {{ config.provider.base_url }}</p>
+            <p>🔥 <strong>OpenAI API</strong>（{{ t('modelSettings.cloudProcessing') }}）</p>
+            <p>{{ t('modelSettings.model') }} {{ config.provider.model_name }}</p>
+            <p>{{ t('modelSettings.apiUrl') }} {{ config.provider.base_url }}</p>
           </div>
         </div>
       </template>
     </el-alert>
     
     <el-form v-loading="loading" label-width="120px" class="settings-form">
-      <el-form-item label="模型提供商">
+      <el-form-item :label="t('modelSettings.form.provider')">
         <el-radio-group v-model="providerType">
-          <el-radio value="ollama">本地 Ollama</el-radio>
-          <el-radio value="deepseek">DeepSeek API</el-radio>
-          <el-radio value="openai">OpenAI API</el-radio>
+          <el-radio value="ollama">{{ t('modelSettings.form.localOllama') }}</el-radio>
+          <el-radio value="deepseek">{{ t('modelSettings.form.deepseek') }}</el-radio>
+          <el-radio value="openai">{{ t('modelSettings.form.openai') }}</el-radio>
         </el-radio-group>
       </el-form-item>
 
       <!-- Ollama 配置 -->
       <template v-if="providerType === 'ollama'">
-        <el-divider content-position="left">Ollama 配置</el-divider>
-        <el-form-item label="服务地址">
+        <el-divider content-position="left">{{ t('modelSettings.form.ollamaConfig') }}</el-divider>
+        <el-form-item :label="t('modelSettings.form.serviceUrl')">
           <el-input v-model="ollamaForm.base_url" placeholder="http://localhost:11434" />
         </el-form-item>
-        <el-form-item label="问答模型">
+        <el-form-item :label="t('modelSettings.form.qaModel')">
           <el-input v-model="ollamaForm.model_name" placeholder="qwen2.5:7b" />
-          <span class="form-tip">用于问答、知识融合等任务</span>
+          <span class="form-tip">{{ t('modelSettings.form.qaModelTip') }}</span>
         </el-form-item>
-        <el-form-item label="提取模型">
+        <el-form-item :label="t('modelSettings.form.extractModel')">
           <el-input v-model="ollamaForm.extract_model_name" placeholder="qwen2.5:7b" />
-          <span class="form-tip">用于实体提取，推荐使用 7b 或更大的模型</span>
+          <span class="form-tip">{{ t('modelSettings.form.extractModelTip') }}</span>
         </el-form-item>
       </template>
 
       <!-- DeepSeek 配置 -->
       <template v-if="providerType === 'deepseek'">
-        <el-divider content-position="left">DeepSeek 配置</el-divider>
-        <el-form-item label="API Key" required>
+        <el-divider content-position="left">{{ t('modelSettings.form.deepseekConfig') }}</el-divider>
+        <el-form-item :label="t('modelSettings.form.apiKey')" required>
           <el-input v-model="deepseekForm.api_key" type="password" show-password placeholder="sk-..." />
           <span class="form-tip">
-            在 <a href="https://platform.deepseek.com" target="_blank">DeepSeek 平台</a> 获取 API Key
+            {{ t('modelSettings.form.deepseekApiKeyTip') }}
+            <a href="https://platform.deepseek.com" target="_blank">{{ t('modelSettings.form.deepseekPlatform') }}</a>
           </span>
         </el-form-item>
-        <el-form-item label="API 地址">
+        <el-form-item :label="t('modelSettings.form.apiUrl')">
           <el-input v-model="deepseekForm.base_url" placeholder="https://api.deepseek.com/v1" />
         </el-form-item>
-        <el-form-item label="模型名称">
-          <el-select v-model="deepseekForm.model_name" placeholder="选择模型">
+        <el-form-item :label="t('modelSettings.form.modelName')">
+          <el-select v-model="deepseekForm.model_name" :placeholder="t('modelSettings.form.selectModel')">
             <el-option label="deepseek-chat" value="deepseek-chat" />
             <el-option label="deepseek-reasoner" value="deepseek-reasoner" />
           </el-select>
@@ -223,77 +224,75 @@ function getCurrentProviderInfo(): string {
 
       <!-- OpenAI 配置 -->
       <template v-if="providerType === 'openai'">
-        <el-divider content-position="left">OpenAI 配置</el-divider>
-        <el-form-item label="API Key" required>
+        <el-divider content-position="left">{{ t('modelSettings.form.openaiConfig') }}</el-divider>
+        <el-form-item :label="t('modelSettings.form.apiKey')" required>
           <el-input v-model="openaiForm.api_key" type="password" show-password placeholder="sk-..." />
         </el-form-item>
-        <el-form-item label="API 地址">
+        <el-form-item :label="t('modelSettings.form.apiUrl')">
           <el-input v-model="openaiForm.base_url" placeholder="https://api.openai.com/v1" />
-          <span class="form-tip">可配置兼容 OpenAI 格式的其他 API</span>
+          <span class="form-tip">{{ t('modelSettings.form.openaiApiUrlTip') }}</span>
         </el-form-item>
-        <el-form-item label="模型名称">
+        <el-form-item :label="t('modelSettings.form.modelName')">
           <el-input v-model="openaiForm.model_name" placeholder="gpt-4" />
         </el-form-item>
       </template>
 
       <!-- 通用参数 -->
-      <el-divider content-position="left">通用参数</el-divider>
+      <el-divider content-position="left">{{ t('modelSettings.form.generalParams') }}</el-divider>
       <el-form-item label="Temperature">
         <el-slider v-model="config.temperature" :min="0" :max="1" :step="0.1" show-input />
-        <span class="form-tip">较低值使输出更确定，较高值使输出更随机</span>
+        <span class="form-tip">{{ t('modelSettings.form.temperatureTip') }}</span>
       </el-form-item>
-      <el-form-item label="最大 Tokens">
+      <el-form-item :label="t('modelSettings.form.maxTokens')">
         <el-input-number v-model="config.max_tokens" :min="512" :max="32768" :step="512" />
       </el-form-item>
 
-      <!-- 操作按钮 -->
       <el-form-item>
         <el-button type="primary" @click="handleSave" :loading="loading">
-          保存配置
+          {{ t('modelSettings.form.saveConfig') }}
         </el-button>
         <el-button @click="handleTest" :loading="testing">
-          测试连接
+          {{ t('modelSettings.form.testConnection') }}
         </el-button>
         <el-button @click="handleReset">
-          重置为默认
+          {{ t('modelSettings.form.resetDefault') }}
         </el-button>
       </el-form-item>
     </el-form>
 
-    <!-- 说明文档 -->
     <el-card class="info-card">
       <template #header>
-        <span>使用说明</span>
+        <span>{{ t('modelSettings.guide.title') }}</span>
       </template>
       <div class="info-content">
-        <h4>🤖 本地 Ollama</h4>
+        <h4>{{ t('modelSettings.guide.localOllama.title') }}</h4>
         <ul>
-          <li>完全免费，数据本地化</li>
-          <li>需要安装 Ollama 并下载模型</li>
-          <li>推荐模型：qwen2.5:7b（快速）、qwen2.5:14b（准确）</li>
-          <li>安装：<code>ollama pull qwen2.5:7b</code></li>
+          <li>{{ t('modelSettings.guide.localOllama.free') }}</li>
+          <li>{{ t('modelSettings.guide.localOllama.requirement') }}</li>
+          <li>{{ t('modelSettings.guide.localOllama.recommend') }}</li>
+          <li>{{ t('modelSettings.guide.localOllama.install') }}<code>ollama pull qwen2.5:7b</code></li>
         </ul>
 
-        <h4>🌐 DeepSeek API</h4>
+        <h4>{{ t('modelSettings.guide.deepseek.title') }}</h4>
         <ul>
-          <li>国内可直接访问，速度快</li>
-          <li>价格便宜：1M tokens 约 ¥1</li>
-          <li>推荐模型：deepseek-chat（通用）、deepseek-reasoner（推理）</li>
-          <li>注册地址：<a href="https://platform.deepseek.com" target="_blank">platform.deepseek.com</a></li>
+          <li>{{ t('modelSettings.guide.deepseek.accessible') }}</li>
+          <li>{{ t('modelSettings.guide.deepseek.price') }}</li>
+          <li>{{ t('modelSettings.guide.deepseek.recommend') }}</li>
+          <li>{{ t('modelSettings.guide.deepseek.register') }}<a href="https://platform.deepseek.com" target="_blank">platform.deepseek.com</a></li>
         </ul>
 
-        <h4>🔥 OpenAI API</h4>
+        <h4>{{ t('modelSettings.guide.openai.title') }}</h4>
         <ul>
-          <li>效果最好，但需要科学上网</li>
-          <li>价格较高：gpt-4 约 $30/1M tokens</li>
-          <li>也可配置兼容 OpenAI 格式的其他 API（如 Azure OpenAI）</li>
+          <li>{{ t('modelSettings.guide.openai.best') }}</li>
+          <li>{{ t('modelSettings.guide.openai.price') }}</li>
+          <li>{{ t('modelSettings.guide.openai.compatible') }}</li>
         </ul>
 
-        <h4>💡 推荐配置</h4>
+        <h4>{{ t('modelSettings.guide.recommend.title') }}</h4>
         <ul>
-          <li><strong>新手/测试</strong>：使用本地 Ollama + qwen2.5:7b（免费）</li>
-          <li><strong>日常使用</strong>：DeepSeek API（便宜快速）</li>
-          <li><strong>追求极致</strong>：本地 Ollama + qwen2.5:14b 或 DeepSeek Reasoner</li>
+          <li><strong>{{ t('modelSettings.guide.recommend.beginner') }}</strong>：{{ t('modelSettings.guide.recommend.beginnerValue') }}</li>
+          <li><strong>{{ t('modelSettings.guide.recommend.daily') }}</strong>：{{ t('modelSettings.guide.recommend.dailyValue') }}</li>
+          <li><strong>{{ t('modelSettings.guide.recommend.best') }}</strong>：{{ t('modelSettings.guide.recommend.bestValue') }}</li>
         </ul>
       </div>
     </el-card>
