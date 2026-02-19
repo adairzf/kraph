@@ -27,7 +27,7 @@ use whisper::{setup_whisper as setup_whisper_runtime, transcribe_audio_with_whis
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Mutex;
-use tauri::{Manager, State};
+use tauri::{Emitter, Manager, State};
 
 pub struct AppDataDir(pub PathBuf);
 pub struct ModelConfigState(pub Mutex<ModelConfig>);
@@ -100,64 +100,60 @@ fn extract_entities(text: String) -> Result<ExtractedData, String> {
         })
 }
 
-#[tauri::command]
-fn save_memory(
+/// save_memory 的阻塞核心逻辑，在 spawn_blocking 中执行以保证事件实时投递
+fn do_save_memory(
+    app: tauri::AppHandle,
     content: String,
     tags: Option<Vec<String>>,
-    db: State<DbState>,
-    data_dir: State<AppDataDir>,
-    config_state: State<ModelConfigState>,
+    config: ModelConfig,
+    memories_dir: std::path::PathBuf,
 ) -> Result<Memory, String> {
-    let memories_dir = data_dir.0.join("memories");
-    
-    // 获取当前配置
-    let config = config_state.0.lock().map_err(|e| e.to_string())?.clone();
-    
-    // 打印当前使用的模型配置
+    // 发送模型信息
     match &config.provider {
-        ModelProvider::Ollama { base_url, model_name, extract_model_name } => {
-            println!("📝 [保存记忆] 使用 Ollama 模型");
-            println!("   - 服务地址: {}", base_url);
-            println!("   - 问答模型: {}", model_name);
-            println!("   - 提取模型: {}", extract_model_name);
+        ModelProvider::Ollama { model_name, extract_model_name, .. } => {
+            emit_save_progress(&app, &format!("📝 使用 Ollama 模型（提取: {}）", extract_model_name), "info");
+            println!("📝 [保存记忆] 使用 Ollama 模型: {}", model_name);
         }
         ModelProvider::DeepSeek { model_name, .. } => {
-            println!("📝 [保存记忆] 使用 DeepSeek API");
-            println!("   - 模型: {}", model_name);
+            emit_save_progress(&app, &format!("📝 使用 DeepSeek API（{}）", model_name), "info");
+            println!("📝 [保存记忆] 使用 DeepSeek API: {}", model_name);
         }
         ModelProvider::OpenAI { model_name, .. } => {
-            println!("📝 [保存记忆] 使用 OpenAI API");
-            println!("   - 模型: {}", model_name);
+            emit_save_progress(&app, &format!("📝 使用 OpenAI API（{}）", model_name), "info");
+            println!("📝 [保存记忆] 使用 OpenAI API: {}", model_name);
         }
     }
-    
+
     // 快速提取获取相关实体名（用于查找历史记忆）
+    emit_save_progress(&app, "🔍 步骤 1/4：正在提取实体...", "running");
     println!("🔍 [步骤1] 开始快速实体提取...");
-    let quick_extracted = if content.trim().len() > 5 {
-        // 如果是Ollama，先确保服务运行
+    let quick_extracted: Option<ExtractedData> = if content.trim().len() > 5 {
         if let ModelProvider::Ollama { base_url, extract_model_name, .. } = &config.provider {
             let _ = ensure_ollama_running(base_url);
             let _ = ensure_model_available(base_url, extract_model_name);
         }
-        
-        call_model_extract(&config, ENTITY_EXTRACT_PROMPT, &content)
+        let extracted = call_model_extract(&config, ENTITY_EXTRACT_PROMPT, &content)
             .map_err(|e| {
+                emit_save_progress(&app, &format!("❌ 实体提取失败: {}", e), "error");
                 println!("❌ 快速提取失败: {}", e);
                 e
-            })
-            .ok()
+            })?;
+        Some(extracted)
     } else {
         None
     };
-    
+
     if let Some(ref ex) = quick_extracted {
+        emit_save_progress(&app, &format!("✅ 提取到 {} 个实体", ex.entities.len()), "success");
         println!("✅ 提取到 {} 个实体", ex.entities.len());
     }
-    
-    let mut guard = (&*db).0.lock().map_err(|e: std::sync::PoisonError<_>| e.to_string())?;
+
+    let db = app.state::<DbState>();
+    let mut guard = db.0.lock().map_err(|e: std::sync::PoisonError<_>| e.to_string())?;
     let conn = guard.as_mut().ok_or("database not initialized")?;
-    
+
     // 获取相关历史记忆（用于知识融合）
+    emit_save_progress(&app, "🔍 步骤 2/4：查找相关历史记忆...", "running");
     println!("🔍 [步骤2] 查找相关历史记忆...");
     let historical_memories = if let Some(ref ex) = quick_extracted {
         let mut all_memories = Vec::new();
@@ -172,75 +168,69 @@ fn save_memory(
                 }
             }
         }
+        emit_save_progress(&app, &format!("✅ 找到 {} 条相关历史记忆", all_memories.len()), "success");
         println!("✅ 找到 {} 条相关历史记忆", all_memories.len());
         all_memories
     } else {
+        emit_save_progress(&app, "✅ 无需查找历史记忆", "success");
         Vec::new()
     };
-    
+
     // 使用知识融合进行深度推理（如果有历史记忆）
     let fused = if !historical_memories.is_empty() && content.trim().len() > 5 {
+        emit_save_progress(&app, "🧠 步骤 3/4：进行知识融合推理...", "running");
         println!("🧠 [步骤3] 开始知识融合推理...");
-        // 如果是Ollama，先确保模型可用
         if let ModelProvider::Ollama { base_url, model_name, .. } = &config.provider {
             let _ = ensure_model_available(base_url, model_name);
         }
-        
-        call_model_fusion(
-            &config,
-            KNOWLEDGE_FUSION_PROMPT,
-            &historical_memories,
-            &content,
-        )
-        .map_err(|e| {
-            println!("⚠️  知识融合失败，回退到快速提取: {}", e);
-            e
-        })
-        .ok()
+        call_model_fusion(&config, KNOWLEDGE_FUSION_PROMPT, &historical_memories, &content)
+            .map_err(|e| {
+                emit_save_progress(&app, "⚠️ 知识融合失败，回退到快速提取", "warning");
+                println!("⚠️  知识融合失败，回退到快速提取: {}", e);
+                e
+            })
+            .ok()
     } else {
+        emit_save_progress(&app, "⏭️ 步骤 3/4：跳过知识融合（无历史记忆）", "skipped");
         println!("⏭️  [步骤3] 跳过知识融合（无历史记忆）");
         None
     };
-    
-    // 如果知识融合失败，回退到快速提取
+
     let (entities, relations, aliases) = if let Some(fused_data) = fused {
-        println!("✅ 知识融合完成: {} 个实体, {} 个关系, {} 个别名", 
+        emit_save_progress(&app, &format!("✅ 知识融合完成：{} 个实体，{} 个关系",
+                 fused_data.entities.len(), fused_data.relations.len()), "success");
+        println!("✅ 知识融合完成: {} 个实体, {} 个关系, {} 个别名",
                  fused_data.entities.len(), fused_data.relations.len(), fused_data.aliases.len());
         (fused_data.entities, fused_data.relations, fused_data.aliases)
     } else if let Some(ex) = quick_extracted {
-        println!("✅ 使用快速提取结果: {} 个实体, {} 个关系", 
+        emit_save_progress(&app, &format!("✅ 实体提取完成：{} 个实体，{} 个关系",
+                 ex.entities.len(), ex.relations.len()), "success");
+        println!("✅ 使用快速提取结果: {} 个实体, {} 个关系",
                  ex.entities.len(), ex.relations.len());
         (ex.entities, ex.relations, Vec::new())
     } else {
+        emit_save_progress(&app, "⚠️ 未提取到任何实体", "warning");
         println!("⚠️  未提取到任何实体");
         (Vec::new(), Vec::new(), Vec::new())
     };
-    
+
     let entity_names: Vec<String> = entities.iter().map(|x| x.name.clone()).collect();
-    
+
+    emit_save_progress(&app, "💾 步骤 4/4：正在保存到数据库...", "running");
     println!("💾 [步骤4] 保存到数据库...");
-    // 保存到文件
     let path = write_memory(
         &memories_dir,
         &content,
         tags.as_deref(),
-        if entity_names.is_empty() {
-            None
-        } else {
-            Some(&entity_names)
-        },
+        if entity_names.is_empty() { None } else { Some(&entity_names) },
     )?;
     let path_str = path.to_string_lossy().to_string();
-    
-    // 保存到数据库
+
     let tags_str = tags.as_ref().map(|t| t.join(","));
     let memory_id = insert_memory(conn, &content, Some(&path_str), tags_str.as_deref())
         .map_err(|e| e.to_string())?;
-    
-    // 建立实体和关系（支持别名）
+
     let mut name_to_id: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
-    
-    // 1. 先创建或获取所有实体
     for e in &entities {
         let attrs = e.attributes.as_ref().map(|a| a.to_string());
         let entity_id = match find_entity_id_by_name_or_alias(conn, &e.name).map_err(|e| e.to_string())? {
@@ -251,36 +241,46 @@ fn save_memory(
         link_memory_entity(conn, memory_id, entity_id).map_err(|e| e.to_string())?;
         name_to_id.insert(e.name.clone(), entity_id);
     }
-    
-    // 2. 处理别名关系
     for alias_info in &aliases {
         let primary_id = name_to_id.get(&alias_info.primary);
         let alias_id = name_to_id.get(&alias_info.alias);
-        
         match (primary_id, alias_id) {
             (Some(&pid), Some(&aid)) if pid != aid => {
-                // 两个实体都存在且不同，需要合并
                 merge_entities(conn, aid, pid).map_err(|e| e.to_string())?;
-                // 更新name_to_id映射
                 name_to_id.insert(alias_info.alias.clone(), pid);
             }
             (Some(&pid), None) => {
-                // primary存在，alias不存在，添加别名
                 add_entity_alias(conn, pid, &alias_info.alias).map_err(|e| e.to_string())?;
             }
             _ => {}
         }
     }
-    
-    // 3. 建立关系
     for r in &relations {
         if let (Some(&from_id), Some(&to_id)) = (name_to_id.get(&r.from), name_to_id.get(&r.to)) {
             let _ = upsert_relation(conn, from_id, to_id, &r.relation);
         }
     }
-    
+
+    emit_save_progress(&app, "✅ 记忆保存完成！", "done");
     println!("✅ 记忆保存完成！");
     get_memory_by_id(conn, memory_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn save_memory(
+    app: tauri::AppHandle,
+    content: String,
+    tags: Option<Vec<String>>,
+    config_state: State<'_, ModelConfigState>,
+    data_dir: State<'_, AppDataDir>,
+) -> Result<Memory, String> {
+    let config = config_state.0.lock().map_err(|e| e.to_string())?.clone();
+    let memories_dir = data_dir.0.join("memories");
+    tokio::task::spawn_blocking(move || {
+        do_save_memory(app, content, tags, config, memories_dir)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -322,10 +322,39 @@ fn get_character_profile(entity_id: i64, db: State<DbState>) -> Result<serde_jso
         .into_iter()
         .filter(|r| r.from_entity_id == entity_id || r.to_entity_id == entity_id)
         .collect();
+
+    // 收集所有需要查名字的实体 ID
+    let mut id_set: std::collections::HashSet<i64> = std::collections::HashSet::new();
+    for r in &entity_relations {
+        id_set.insert(r.from_entity_id);
+        id_set.insert(r.to_entity_id);
+    }
+    let mut id_to_name: std::collections::HashMap<i64, String> = std::collections::HashMap::new();
+    for id in id_set {
+        if let Ok(e) = get_entity_by_id(conn, id) {
+            id_to_name.insert(id, e.name);
+        }
+    }
+
+    // 构建带实体名称的关系列表
+    let enriched_relations: Vec<serde_json::Value> = entity_relations
+        .iter()
+        .map(|r| {
+            serde_json::json!({
+                "from_entity_id": r.from_entity_id,
+                "from_name": id_to_name.get(&r.from_entity_id).cloned().unwrap_or_default(),
+                "to_entity_id": r.to_entity_id,
+                "to_name": id_to_name.get(&r.to_entity_id).cloned().unwrap_or_default(),
+                "relation_type": r.relation_type,
+                "strength": r.strength,
+            })
+        })
+        .collect();
+
     Ok(serde_json::json!({
         "entity": entity,
         "memories": memories,
-        "relations": entity_relations
+        "relations": enriched_relations
     }))
 }
 
@@ -336,63 +365,57 @@ fn get_timeline(db: State<DbState>) -> Result<Vec<Memory>, String> {
     list_memories(conn).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
-fn update_memory_content(
+/// update_memory_content 的阻塞核心逻辑，在 spawn_blocking 中执行以保证事件实时投递
+fn do_update_memory(
+    app: tauri::AppHandle,
     memory_id: i64,
     content: String,
-    tags: Option<Vec<String>>,
-    db: State<DbState>,
-    config_state: State<ModelConfigState>,
+    tags_str: Option<String>,
+    config: ModelConfig,
 ) -> Result<Memory, String> {
-    let tags_str = tags.map(|t| t.join(","));
-    
-    // 获取当前配置
-    let config = config_state.0.lock().map_err(|e| e.to_string())?.clone();
-    
-    // 打印当前使用的模型配置
     println!("📝 [更新记忆 ID:{}]", memory_id);
     match &config.provider {
-        ModelProvider::Ollama { base_url, model_name, extract_model_name } => {
-            println!("   使用 Ollama: {}", base_url);
-            println!("   提取模型: {}", extract_model_name);
+        ModelProvider::Ollama { extract_model_name, .. } => {
+            emit_save_progress(&app, &format!("📝 使用 Ollama 更新记忆（提取: {}）", extract_model_name), "info");
         }
         ModelProvider::DeepSeek { model_name, .. } => {
-            println!("   使用 DeepSeek: {}", model_name);
+            emit_save_progress(&app, &format!("📝 使用 DeepSeek 更新记忆（{}）", model_name), "info");
         }
         ModelProvider::OpenAI { model_name, .. } => {
-            println!("   使用 OpenAI: {}", model_name);
+            emit_save_progress(&app, &format!("📝 使用 OpenAI 更新记忆（{}）", model_name), "info");
         }
     }
-    
-    let mut guard = (&*db).0.lock().map_err(|e: std::sync::PoisonError<_>| e.to_string())?;
-    let conn = guard.as_mut().ok_or("database not initialized")?;
-    
+
     // 快速提取获取相关实体名
+    emit_save_progress(&app, "🔍 步骤 1/4：正在提取实体...", "running");
     println!("🔍 开始实体提取...");
     let quick_extracted = if content.trim().len() > 5 {
-        // 如果是Ollama，先确保服务运行
         if let ModelProvider::Ollama { base_url, extract_model_name, .. } = &config.provider {
             let _ = ensure_ollama_running(base_url);
             let _ = ensure_model_available(base_url, extract_model_name);
         }
-        
         call_model_extract(&config, ENTITY_EXTRACT_PROMPT, &content).ok()
     } else {
         None
     };
-    
+
     if let Some(ref ex) = quick_extracted {
+        emit_save_progress(&app, &format!("✅ 提取到 {} 个实体", ex.entities.len()), "success");
         println!("✅ 提取到 {} 个实体", ex.entities.len());
     }
-    
+
+    let db = app.state::<DbState>();
+    let mut guard = db.0.lock().map_err(|e: std::sync::PoisonError<_>| e.to_string())?;
+    let conn = guard.as_mut().ok_or("database not initialized")?;
+
     // 获取相关历史记忆（用于知识融合）
+    emit_save_progress(&app, "🔍 步骤 2/4：查找相关历史记忆...", "running");
     let historical_memories = if let Some(ref ex) = quick_extracted {
         let mut all_memories = Vec::new();
         for entity in &ex.entities {
             if let Ok(Some(existing_entity)) = get_entity_by_name(conn, &entity.name) {
                 if let Ok(memories) = get_memories_for_entity(conn, existing_entity.id) {
                     for mem in memories.into_iter().take(5) {
-                        // 排除当前正在编辑的记忆
                         if mem.id != memory_id && !all_memories.contains(&mem.content) {
                             all_memories.push(mem.content);
                         }
@@ -400,50 +423,46 @@ fn update_memory_content(
                 }
             }
         }
+        emit_save_progress(&app, &format!("✅ 找到 {} 条相关历史记忆", all_memories.len()), "success");
         all_memories
     } else {
+        emit_save_progress(&app, "✅ 无需查找历史记忆", "success");
         Vec::new()
     };
-    
-    // 使用知识融合进行深度推理
+
     let fused = if !historical_memories.is_empty() && content.trim().len() > 5 {
+        emit_save_progress(&app, "🧠 步骤 3/4：进行知识融合推理...", "running");
         println!("🧠 进行知识融合...");
-        // 如果是Ollama，先确保模型可用
         if let ModelProvider::Ollama { base_url, model_name, .. } = &config.provider {
             let _ = ensure_model_available(base_url, model_name);
         }
-        
-        call_model_fusion(
-            &config,
-            KNOWLEDGE_FUSION_PROMPT,
-            &historical_memories,
-            &content,
-        ).ok()
+        call_model_fusion(&config, KNOWLEDGE_FUSION_PROMPT, &historical_memories, &content).ok()
     } else {
+        emit_save_progress(&app, "⏭️ 步骤 3/4：跳过知识融合（无历史记忆）", "skipped");
         None
     };
-    
-    // 如果知识融合失败，回退到快速提取
+
     let (entities, relations, aliases) = if let Some(fused_data) = fused {
+        emit_save_progress(&app, &format!("✅ 知识融合完成：{} 个实体，{} 个关系",
+                 fused_data.entities.len(), fused_data.relations.len()), "success");
         println!("✅ 知识融合完成");
         (fused_data.entities, fused_data.relations, fused_data.aliases)
     } else if let Some(ex) = quick_extracted {
+        emit_save_progress(&app, &format!("✅ 实体提取完成：{} 个实体，{} 个关系",
+                 ex.entities.len(), ex.relations.len()), "success");
         println!("✅ 使用快速提取结果");
         (ex.entities, ex.relations, Vec::new())
     } else {
+        emit_save_progress(&app, "⚠️ 未提取到任何实体", "warning");
         (Vec::new(), Vec::new(), Vec::new())
     };
-    
-    // 更新记忆内容
+
+    emit_save_progress(&app, "💾 步骤 4/4：正在保存到数据库...", "running");
+
     update_memory(conn, memory_id, &content, tags_str.as_deref()).map_err(|e| e.to_string())?;
-    
-    // 清除旧的实体关联
     clear_memory_entities(conn, memory_id).map_err(|e| e.to_string())?;
-    
-    // 建立新的实体和关系（支持别名）
+
     let mut name_to_id: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
-    
-    // 1. 先创建或获取所有实体
     for e in &entities {
         let attrs = e.attributes.as_ref().map(|a| a.to_string());
         let entity_id = match find_entity_id_by_name_or_alias(conn, &e.name).map_err(|e| e.to_string())? {
@@ -454,56 +473,63 @@ fn update_memory_content(
         link_memory_entity(conn, memory_id, entity_id).map_err(|e| e.to_string())?;
         name_to_id.insert(e.name.clone(), entity_id);
     }
-    
-    // 2. 处理别名关系
     for alias_info in &aliases {
         let primary_id = name_to_id.get(&alias_info.primary);
         let alias_id = name_to_id.get(&alias_info.alias);
-        
         match (primary_id, alias_id) {
             (Some(&pid), Some(&aid)) if pid != aid => {
-                // 两个实体都存在且不同，需要合并
                 merge_entities(conn, aid, pid).map_err(|e| e.to_string())?;
-                // 更新name_to_id映射
                 name_to_id.insert(alias_info.alias.clone(), pid);
             }
             (Some(&pid), None) => {
-                // primary存在，alias不存在，添加别名
                 add_entity_alias(conn, pid, &alias_info.alias).map_err(|e| e.to_string())?;
             }
             _ => {}
         }
     }
-    
-    // 3. 建立关系
     for r in &relations {
         if let (Some(&from_id), Some(&to_id)) = (name_to_id.get(&r.from), name_to_id.get(&r.to)) {
             let _ = upsert_relation(conn, from_id, to_id, &r.relation);
         }
     }
-    
-    // 清理孤立数据
+
     conn.execute(
-        r#"DELETE FROM relations 
+        r#"DELETE FROM relations
            WHERE from_entity_id NOT IN (SELECT id FROM entities)
               OR to_entity_id NOT IN (SELECT id FROM entities)"#,
         [],
     ).map_err(|e| e.to_string())?;
-    
     conn.execute(
         "DELETE FROM entities WHERE id NOT IN (SELECT DISTINCT entity_id FROM memory_entities)",
         [],
     ).map_err(|e| e.to_string())?;
-    
     conn.execute(
-        r#"DELETE FROM relations 
+        r#"DELETE FROM relations
            WHERE from_entity_id NOT IN (SELECT id FROM entities)
               OR to_entity_id NOT IN (SELECT id FROM entities)"#,
         [],
     ).map_err(|e| e.to_string())?;
-    
+
+    emit_save_progress(&app, "✅ 记忆更新完成！", "done");
     println!("✅ 记忆更新完成！");
     get_memory_by_id(conn, memory_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn update_memory_content(
+    app: tauri::AppHandle,
+    memory_id: i64,
+    content: String,
+    tags: Option<Vec<String>>,
+    config_state: State<'_, ModelConfigState>,
+) -> Result<Memory, String> {
+    let config = config_state.0.lock().map_err(|e| e.to_string())?.clone();
+    let tags_str = tags.map(|t| t.join(","));
+    tokio::task::spawn_blocking(move || {
+        do_update_memory(app, memory_id, content, tags_str, config)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -677,6 +703,123 @@ fn check_ollama() -> Result<(bool, String), String> {
     Ok(check_ollama_status(OLLAMA_URL))
 }
 
+/// 向前端发送初始化日志事件的辅助函数
+fn emit_setup_log(app: &tauri::AppHandle, msg: &str, status: &str) {
+    let _ = app.emit(
+        "ollama-setup-log",
+        serde_json::json!({ "message": msg, "status": status }),
+    );
+}
+
+/// 向前端发送记忆保存进度事件
+fn emit_save_progress(app: &tauri::AppHandle, msg: &str, status: &str) {
+    let _ = app.emit(
+        "memory-save-progress",
+        serde_json::json!({ "message": msg, "status": status }),
+    );
+}
+
+/// 向前端发送初始化完成事件
+fn emit_setup_done(app: &tauri::AppHandle, success: bool) {
+    let _ = app.emit("ollama-setup-done", serde_json::json!({ "success": success }));
+}
+
+/// Ollama 一键初始化的阻塞执行体：检查安装 → 启动服务 → 下载模型
+fn do_ollama_setup(app: tauri::AppHandle, base_url: String, model_name: String, extract_model_name: String) {
+    // Step 1: 检查 Ollama 是否已安装
+    emit_setup_log(&app, "正在检查 Ollama 安装状态...", "running");
+
+    if !ollama::check_ollama_installed() {
+        emit_setup_log(&app, "Ollama 未安装，正在下载安装程序...", "running");
+        match ollama_installer::download_and_open_ollama_installer() {
+            Ok(msg) => {
+                emit_setup_log(&app, &format!("✅ {}", msg), "success");
+                emit_setup_log(&app, "⚠️ 请完成 Ollama 安装后，重新点击【初始化】按钮", "warning");
+            }
+            Err(e) => {
+                emit_setup_log(&app, &format!("❌ 下载安装程序失败: {}", e), "error");
+            }
+        }
+        emit_setup_done(&app, false);
+        return;
+    }
+    emit_setup_log(&app, "✅ Ollama 已安装", "success");
+
+    // Step 2: 检查并启动 Ollama 服务
+    emit_setup_log(&app, "正在检查 Ollama 服务状态...", "running");
+    let (running, _) = ollama::check_ollama_status(&base_url);
+    if !running {
+        emit_setup_log(&app, "Ollama 服务未运行，正在尝试启动...", "running");
+        match ollama::ensure_ollama_running(&base_url) {
+            Ok(_) => emit_setup_log(&app, "✅ Ollama 服务已启动", "success"),
+            Err(e) => {
+                emit_setup_log(&app, &format!("❌ 启动失败: {}，请手动启动 Ollama 后重试", e), "error");
+                emit_setup_done(&app, false);
+                return;
+            }
+        }
+    } else {
+        emit_setup_log(&app, "✅ Ollama 服务正在运行", "success");
+    }
+
+    // Step 3: 检查并拉取所需模型（跳过已存在的）
+    let mut models: Vec<(String, &str)> = vec![(model_name.clone(), "问答")];
+    if extract_model_name != model_name {
+        models.push((extract_model_name.clone(), "提取"));
+    }
+
+    for (model, label) in &models {
+        emit_setup_log(&app, &format!("正在检查{}模型 {}...", label, model), "running");
+        if ollama::check_model_exists(&base_url, model) {
+            emit_setup_log(&app, &format!("✅ 模型 {} 已就绪", model), "success");
+        } else {
+            emit_setup_log(
+                &app,
+                &format!("正在下载{}模型 {}（可能需要几分钟，请耐心等待）...", label, model),
+                "running",
+            );
+            match ollama::pull_model(&base_url, model) {
+                Ok(_) => emit_setup_log(&app, &format!("✅ 模型 {} 下载完成", model), "success"),
+                Err(e) => {
+                    emit_setup_log(&app, &format!("❌ 下载模型 {} 失败: {}", model, e), "error");
+                    emit_setup_done(&app, false);
+                    return;
+                }
+            }
+        }
+    }
+
+    emit_setup_log(&app, "🎉 Ollama 初始化完成，一切就绪！", "success");
+    emit_setup_done(&app, true);
+}
+
+/// Ollama 一键初始化：安装检测 → 启动服务 → 下载模型（已完成的步骤自动跳过）
+#[tauri::command]
+async fn run_ollama_setup(
+    app: tauri::AppHandle,
+    config_state: State<'_, ModelConfigState>,
+) -> Result<(), String> {
+    let config = {
+        let guard = config_state.0.lock().map_err(|e| e.to_string())?;
+        guard.clone()
+    };
+
+    let (base_url, model_name, extract_model_name) = match &config.provider {
+        ModelProvider::Ollama { base_url, model_name, extract_model_name } => {
+            (base_url.clone(), model_name.clone(), extract_model_name.clone())
+        }
+        _ => return Err("当前未配置本地 Ollama 提供商，请先在设置中选择 Ollama".to_string()),
+    };
+
+    tokio::task::spawn_blocking(move || {
+        do_ollama_setup(app, base_url, model_name, extract_model_name);
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -719,6 +862,7 @@ pub fn run() {
             answer_question,
             download_ollama_installer,
             check_ollama,
+            run_ollama_setup,
             get_model_config,
             update_model_config,
             test_model_config,

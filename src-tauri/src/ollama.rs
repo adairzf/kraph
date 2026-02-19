@@ -419,6 +419,24 @@ pub fn call_ollama_extract_blocking(base_url: &str, model: &str, text: &str) -> 
 }
 
 /// 知识融合推理：结合历史记忆和新记忆，进行实体合并和关系推导
+/// 检查 Ollama 是否已安装（可执行文件或 macOS 应用存在）
+pub fn check_ollama_installed() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        if std::path::Path::new("/Applications/Ollama.app").exists() {
+            return true;
+        }
+    }
+    // 尝试执行 ollama --version，成功则说明已安装且在 PATH 中
+    std::process::Command::new("ollama")
+        .arg("--version")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok()
+}
+
 pub fn call_ollama_knowledge_fusion(
     base_url: &str,
     model: &str,

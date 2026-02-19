@@ -1,11 +1,25 @@
 <script setup lang="ts">
 import { ref } from 'vue'
+import { ElMessageBox } from 'element-plus'
 import { answerQuestion } from '../utils/tauriApi'
+import { useOllamaStore } from '../stores/ollamaStore'
 
 const question = ref('')
 const answer = ref('')
 const loading = ref(false)
 const error = ref<string | null>(null)
+
+const ollamaStore = useOllamaStore()
+
+/** 判断错误信息是否为 Ollama 服务相关的异常 */
+function isOllamaError(msg: string): boolean {
+  const keywords = [
+    'ollama', 'Ollama',
+    '连接失败', 'connection refused', 'connection reset',
+    '502', 'bad gateway', '未响应', '无法连接',
+  ]
+  return keywords.some((k) => msg.includes(k))
+}
 
 async function ask() {
   const q = question.value.trim()
@@ -16,7 +30,26 @@ async function ask() {
   try {
     answer.value = await answerQuestion(q)
   } catch (e) {
-    error.value = e instanceof Error ? e.message : String(e)
+    const errMsg = e instanceof Error ? e.message : String(e)
+    error.value = errMsg
+
+    // 检测到 Ollama 服务异常，询问用户是否运行一键初始化
+    if (isOllamaError(errMsg)) {
+      try {
+        await ElMessageBox.confirm(
+          '检测到 Ollama 服务异常，是否立即运行一键初始化？\n（将自动完成安装检测、服务启动、模型下载）',
+          'Ollama 服务异常',
+          {
+            confirmButtonText: '立即初始化',
+            cancelButtonText: '忽略',
+            type: 'warning',
+          },
+        )
+        ollamaStore.requestSetup()
+      } catch {
+        // 用户点击了忽略，不做任何处理
+      }
+    }
   } finally {
     loading.value = false
   }

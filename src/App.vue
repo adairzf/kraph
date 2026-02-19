@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import MemoryList from './components/MemoryList.vue'
 import InputPanel from './components/InputPanel.vue'
 import EditorPanel from './components/EditorPanel.vue'
@@ -9,26 +9,57 @@ import CharacterCard from './components/CharacterCard.vue'
 import SearchPanel from './components/SearchPanel.vue'
 import ModelSettings from './components/ModelSettings.vue'
 import ModelIndicator from './components/ModelIndicator.vue'
+import OllamaSetupDialog from './components/OllamaSetupDialog.vue'
 import { useGraphStore } from './stores/graphStore'
-import { downloadOllamaInstaller, checkOllama, openMemoriesFolder, cleanupDatabase, clearAllData } from './utils/tauriApi'
-import { onMounted, onUnmounted } from 'vue'
+import { useOllamaStore } from './stores/ollamaStore'
+import { checkOllama, getModelConfig, openMemoriesFolder, cleanupDatabase, clearAllData } from './utils/tauriApi'
+import { onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 const editorContent = ref('')
 const centerView = ref<'edit' | 'timeline' | 'qa' | 'settings'>('qa')
 const graphStore = useGraphStore()
+const ollamaStore = useOllamaStore()
 const searchName = ref('')
-const ollamaDownloading = ref(false)
-const ollamaMessage = ref('')
-const ollamaStatus = ref<string>('')
-const ollamaProgress = ref('')
 const leftSidebarCollapsed = ref(false)
-let ollamaProgressTimer: number | null = null
+
+// Ollama 状态
+const ollamaChecking = ref(true)
+const ollamaRunning = ref(false)
+const isOllamaProvider = ref(false)
+
+// 初始化弹窗 ref
+const setupDialogRef = ref<InstanceType<typeof OllamaSetupDialog> | null>(null)
 
 onMounted(async () => {
-  const [running, msg] = await checkOllama()
-  ollamaStatus.value = running ? '✓ Ollama 已运行' : msg
+  try {
+    const config = await getModelConfig()
+    isOllamaProvider.value = config.provider.type === 'ollama'
+    if (isOllamaProvider.value) {
+      const [running] = await checkOllama()
+      ollamaRunning.value = running
+    }
+  } catch {
+    // 忽略初始化检测错误
+  } finally {
+    ollamaChecking.value = false
+  }
 })
+
+// 监听其他组件（如 SearchPanel）发出的初始化请求
+watch(
+  () => ollamaStore.setupRequested,
+  (val: boolean) => {
+    if (val) {
+      ollamaStore.consumeSetupRequest()
+      openSetupDialog()
+    }
+  },
+)
+
+function openSetupDialog() {
+  setupDialogRef.value?.openAndStart()
+}
 
 function onSearchEntity() {
   graphStore.setSearchEntity(searchName.value.trim() || null)
@@ -38,7 +69,7 @@ async function onOpenMemoriesFolder() {
   try {
     await openMemoriesFolder()
   } catch (e) {
-    ollamaMessage.value = e instanceof Error ? e.message : String(e)
+    ElMessage.error(e instanceof Error ? e.message : String(e))
   }
 }
 
@@ -78,40 +109,6 @@ async function onClearAllData() {
   }
 }
 
-async function onDownloadOllama() {
-  ollamaDownloading.value = true
-  ollamaMessage.value = ''
-  ollamaProgress.value = '正在准备下载安装包，请稍候'
-  let dot = 0
-  ollamaProgressTimer = window.setInterval(() => {
-    dot = (dot + 1) % 4
-    ollamaProgress.value = `正在下载并打开安装器${'.'.repeat(dot)}`
-  }, 500)
-  try {
-    const msg = await downloadOllamaInstaller()
-    ollamaMessage.value = msg
-    setTimeout(async () => {
-      const [running, status] = await checkOllama()
-      ollamaStatus.value = running ? '✓ Ollama 已运行' : status
-    }, 2000)
-  } catch (e) {
-    ollamaMessage.value = e instanceof Error ? e.message : String(e)
-  } finally {
-    if (ollamaProgressTimer) {
-      window.clearInterval(ollamaProgressTimer)
-      ollamaProgressTimer = null
-    }
-    ollamaProgress.value = ''
-    ollamaDownloading.value = false
-  }
-}
-
-onUnmounted(() => {
-  if (ollamaProgressTimer) {
-    window.clearInterval(ollamaProgressTimer)
-    ollamaProgressTimer = null
-  }
-})
 </script>
 
 <template>
@@ -120,15 +117,33 @@ onUnmounted(() => {
       <h1 class="title">记忆 · 知识图谱</h1>
       <div class="header-actions">
         <ModelIndicator />
-        <span v-if="ollamaStatus" class="ollama-status">{{ ollamaStatus }}</span>
+
+        <!-- Ollama 一体化状态按钮：仅在使用 Ollama 提供商时显示 -->
         <button
+          v-if="isOllamaProvider || ollamaChecking"
+          type="button"
+          class="btn-ollama-status"
+          :class="{
+            'status-checking': ollamaChecking,
+            'status-ok': !ollamaChecking && ollamaRunning,
+            'status-warn': !ollamaChecking && !ollamaRunning,
+          }"
+          :title="ollamaChecking ? '正在检测 Ollama 状态...' : ollamaRunning ? '点击重新检测/初始化 Ollama' : '点击一键初始化 Ollama'"
+          @click="openSetupDialog"
+        >
+          <span v-if="ollamaChecking">⏳ 检测中…</span>
+          <span v-else-if="ollamaRunning">✓ Ollama 已就绪</span>
+          <span v-else>⚡ 初始化 Ollama</span>
+        </button>
+
+        <!-- <button
           type="button"
           class="btn-cleanup"
           @click="onCleanupDatabase"
           title="清理数据库脏数据"
         >
           🧹 清理数据库
-        </button>
+        </button> -->
         <button
           type="button"
           class="btn-clear-all"
@@ -144,17 +159,10 @@ onUnmounted(() => {
         >
           打开记忆文件夹
         </button>
-        <button
-          type="button"
-          class="btn-download-ollama"
-          :disabled="ollamaDownloading"
-          @click="onDownloadOllama"
-        >
-          {{ ollamaDownloading ? '正在下载…' : '下载并安装 Ollama' }}
-        </button>
-        <p v-if="ollamaProgress" class="header-progress">{{ ollamaProgress }}</p>
-        <p v-if="ollamaMessage" class="header-message">{{ ollamaMessage }}</p>
       </div>
+
+      <!-- Ollama 初始化弹窗 -->
+      <OllamaSetupDialog ref="setupDialogRef" />
     </header>
     <div class="main">
       <aside class="sidebar left" :class="{ collapsed: leftSidebarCollapsed }">
@@ -285,21 +293,37 @@ onUnmounted(() => {
   gap: 0.5rem;
   flex-wrap: wrap;
 }
-.ollama-status {
+/* Ollama 一体化状态按钮 */
+.btn-ollama-status {
+  padding: 0.35rem 0.75rem;
   font-size: 0.8125rem;
-  padding: 0.3rem 0.6rem;
-  border-radius: 4px;
-  background: #f0f0f0;
-  color: #666;
-}
-.btn-download-ollama {
-  padding: 0.4rem 0.75rem;
-  font-size: 0.8125rem;
-  border: 1px solid #24c8db;
-  background: #fff;
-  color: #24c8db;
   border-radius: 6px;
   cursor: pointer;
+  transition: all 0.2s;
+  font-weight: 500;
+  border: 1px solid transparent;
+}
+.btn-ollama-status.status-checking {
+  border-color: #ddd;
+  background: #f5f5f5;
+  color: #999;
+  cursor: default;
+}
+.btn-ollama-status.status-ok {
+  border-color: #67c23a;
+  background: #f0f9eb;
+  color: #67c23a;
+}
+.btn-ollama-status.status-ok:hover {
+  background: #e1f3d8;
+}
+.btn-ollama-status.status-warn {
+  border-color: #e6a23c;
+  background: #fdf6ec;
+  color: #e6a23c;
+}
+.btn-ollama-status.status-warn:hover {
+  background: #faecd8;
 }
 .btn-open-memories {
   padding: 0.4rem 0.75rem;
@@ -336,24 +360,6 @@ onUnmounted(() => {
 }
 .btn-clear-all:hover {
   background: #ffebee;
-}
-.btn-download-ollama:hover:not(:disabled) {
-  background: #e8f9fb;
-}
-.btn-download-ollama:disabled {
-  opacity: 0.7;
-  cursor: not-allowed;
-}
-.header-message {
-  margin: 0;
-  font-size: 0.8125rem;
-  color: #666;
-  max-width: 320px;
-}
-.header-progress {
-  margin: 0;
-  font-size: 0.8125rem;
-  color: #0a7f8c;
 }
 .main {
   flex: 1;
@@ -452,7 +458,7 @@ onUnmounted(() => {
   transition: margin-left 0.3s ease;
 }
 .center.left-collapsed {
-  /* 当左侧收起时，可以有更多空间 */
+  margin-left: 0;
 }
 .center-tabs {
   display: flex;

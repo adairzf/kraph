@@ -6,10 +6,19 @@ import type { Memory } from '../types/memory'
 
 const props = defineProps<{ entityId: number | null; entityName: string | null }>()
 
+interface RelationItem {
+  from_entity_id: number
+  from_name: string
+  to_entity_id: number
+  to_name: string
+  relation_type: string
+  strength: number
+}
+
 const profile = ref<{
   entity: Entity
   memories: Memory[]
-  relations: { from_entity_id: number; to_entity_id: number; relation_type: string }[]
+  relations: RelationItem[]
 } | null>(null)
 const loading = ref(false)
 const error = ref<string | null>(null)
@@ -120,11 +129,16 @@ function parseAttributes(attributes: string | null | undefined): string[] {
       <div v-if="profile.relations.length" class="section">
         <h4>关系</h4>
         <ul class="relations">
-          <li
-            v-for="(r, i) in profile.relations"
-            :key="i"
-          >
-            {{ r.relation_type }}
+          <li v-for="(r, i) in profile.relations" :key="i" class="relation-item">
+            <span
+              class="rel-entity"
+              :class="{ 'rel-self': r.from_entity_id === profile.entity.id }"
+            >{{ r.from_name }}</span>
+            <span class="rel-type">{{ r.relation_type }}</span>
+            <span
+              class="rel-entity"
+              :class="{ 'rel-self': r.to_entity_id === profile.entity.id }"
+            >{{ r.to_name }}</span>
           </li>
         </ul>
       </div>
@@ -208,6 +222,34 @@ function parseAttributes(attributes: string | null | undefined): string[] {
   list-style: none;
   margin: 0;
   padding: 0;
+}
+.relation-item {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.2rem 0;
+  border-bottom: 1px solid #f0f0f0;
+  flex-wrap: wrap;
+  line-height: 1.5;
+}
+.relation-item:last-child {
+  border-bottom: none;
+}
+.rel-entity {
+  color: #333;
+  font-weight: 500;
+}
+.rel-entity.rel-self {
+  color: #24c8db;
+  font-weight: 600;
+}
+.rel-type {
+  color: #888;
+  font-size: 0.8rem;
+  padding: 0.05rem 0.35rem;
+  background: #f5f5f5;
+  border-radius: 3px;
+  white-space: nowrap;
 }
 .memory-item {
   padding: 0.25rem 0;

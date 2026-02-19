@@ -60,6 +60,8 @@ pub fn init_db(db_path: &Path) -> SqliteResult<Connection> {
 fn init_schema(conn: &Connection) -> SqliteResult<()> {
     conn.execute_batch(
         r#"
+        PRAGMA foreign_keys = ON;
+
         CREATE TABLE IF NOT EXISTS entities (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             type TEXT NOT NULL,
@@ -244,32 +246,40 @@ pub fn merge_entities(conn: &Connection, source_id: i64, target_id: i64) -> Sqli
         "UPDATE OR IGNORE entity_aliases SET entity_id = ?1 WHERE entity_id = ?2",
         params![target_id, source_id],
     )?;
-    
+
     // 2. 将source的记忆关联转移到target
     conn.execute(
         "UPDATE OR IGNORE memory_entities SET entity_id = ?1 WHERE entity_id = ?2",
         params![target_id, source_id],
     )?;
-    
+
     // 3. 将source作为from的关系转移到target
+    // UPDATE OR IGNORE：若目标已有完全相同的关系（from/to/type 三元组相同），会静默忽略
     conn.execute(
         "UPDATE OR IGNORE relations SET from_entity_id = ?1 WHERE from_entity_id = ?2",
         params![target_id, source_id],
     )?;
-    
+
     // 4. 将source作为to的关系转移到target
     conn.execute(
         "UPDATE OR IGNORE relations SET to_entity_id = ?1 WHERE to_entity_id = ?2",
         params![target_id, source_id],
     )?;
-    
-    // 5. 将source的名称作为target的别名
+
+    // 5. 删除因 UNIQUE 冲突未能迁移、仍引用 source 的重复关系
+    //    若不清除，下一步 DELETE entities 会因外键约束失败
+    conn.execute(
+        "DELETE FROM relations WHERE from_entity_id = ?1 OR to_entity_id = ?1",
+        params![source_id],
+    )?;
+
+    // 6. 将source的名称作为target的别名
     let source_entity = get_entity_by_id(conn, source_id)?;
     add_entity_alias(conn, target_id, &source_entity.name)?;
-    
-    // 6. 删除source实体（级联删除会清理剩余引用）
+
+    // 7. 删除source实体（entity_aliases/memory_entities 有 CASCADE，会自动清理）
     conn.execute("DELETE FROM entities WHERE id = ?1", params![source_id])?;
-    
+
     Ok(())
 }
 

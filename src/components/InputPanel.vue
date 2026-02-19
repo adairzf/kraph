@@ -1,14 +1,21 @@
 <script setup lang="ts">
 import { ref, watch, onMounted } from 'vue'
+import { listen } from '@tauri-apps/api/event'
 import { useMemoryStore } from '../stores/memoryStore'
 import { useGraphStore } from '../stores/graphStore'
 import { setupWhisper, transcribeAudio } from '../utils/tauriApi'
+
+interface SaveProgressStep {
+  message: string
+  status: 'info' | 'running' | 'success' | 'warning' | 'error' | 'skipped' | 'done'
+}
 
 const emit = defineEmits<{ (e: 'update:modelValue', v: string): void }>()
 const props = defineProps<{ modelValue: string }>()
 const memoryStore = useMemoryStore()
 const graphStore = useGraphStore()
 const saving = ref(false)
+const saveProgress = ref<SaveProgressStep[]>([])
 const recording = ref(false)
 const transcribing = ref(false)
 const preparingWhisper = ref(false)
@@ -243,14 +250,27 @@ async function handleSave() {
   const content = text.value.trim()
   if (!content) return
   saving.value = true
+  saveProgress.value = []
+
+  const unlisten = await listen<{ message: string; status: string }>('memory-save-progress', (event) => {
+    saveProgress.value.push({
+      message: event.payload.message,
+      status: event.payload.status as SaveProgressStep['status'],
+    })
+  })
+
   try {
     await memoryStore.saveMemory(content)
     await graphStore.fetchGraph()
     text.value = ''
     emit('update:modelValue', '')
+    // 保存完成后短暂展示结果，再淡出
+    await new Promise((resolve) => setTimeout(resolve, 2500))
+    saveProgress.value = []
   } catch {
     // error in store
   } finally {
+    unlisten()
     saving.value = false
   }
 }
@@ -283,6 +303,27 @@ async function handleSave() {
     </div>
     <p v-if="whisperProgress" class="voice-progress">{{ whisperProgress }}</p>
     <p v-if="voiceError" class="voice-error">{{ voiceError }}</p>
+
+    <!-- 保存进度 -->
+    <div v-if="saveProgress.length > 0" class="save-progress">
+      <div
+        v-for="(step, i) in saveProgress"
+        :key="i"
+        class="progress-step"
+        :class="`step-${step.status}`"
+      >
+        <span class="step-icon">
+          <span v-if="step.status === 'running'" class="spinner">⏳</span>
+          <span v-else-if="step.status === 'success'">✅</span>
+          <span v-else-if="step.status === 'done'">🎉</span>
+          <span v-else-if="step.status === 'warning'">⚠️</span>
+          <span v-else-if="step.status === 'error'">❌</span>
+          <span v-else-if="step.status === 'skipped'">⏭️</span>
+          <span v-else>ℹ️</span>
+        </span>
+        <span class="step-message">{{ step.message }}</span>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -341,5 +382,63 @@ async function handleSave() {
   margin: 0.5rem 0 0;
   font-size: 0.8125rem;
   color: #0a7f8c;
+}
+
+/* 保存进度面板 */
+.save-progress {
+  margin-top: 0.6rem;
+  padding: 0.5rem 0.6rem;
+  background: #f8fffe;
+  border: 1px solid #d0f0f3;
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.progress-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+  line-height: 1.4;
+  padding: 0.1rem 0;
+}
+.step-icon {
+  flex-shrink: 0;
+  font-size: 0.85rem;
+}
+.step-message {
+  color: #444;
+}
+.step-running .step-message {
+  color: #0a7f8c;
+  font-style: italic;
+}
+.step-success .step-message {
+  color: #2d7a2d;
+}
+.step-done .step-message {
+  color: #1a6e1a;
+  font-weight: 600;
+}
+.step-warning .step-message {
+  color: #b56f00;
+}
+.step-error .step-message {
+  color: #c00;
+}
+.step-skipped .step-message {
+  color: #999;
+}
+.step-info .step-message {
+  color: #555;
+}
+@keyframes spin {
+  from { display: inline-block; transform: rotate(0deg); }
+  to { display: inline-block; transform: rotate(360deg); }
+}
+.spinner {
+  display: inline-block;
+  animation: spin 1.5s linear infinite;
 }
 </style>

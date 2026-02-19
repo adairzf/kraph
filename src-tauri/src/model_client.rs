@@ -5,6 +5,13 @@ use crate::ollama::{ExtractedData, FusedKnowledge};
 use serde_json::json;
 use std::time::Duration;
 
+/// 实体提取专用最小输出 token 数。
+/// 提取任务需要输出完整的大型 JSON，必须给足空间，否则 JSON 会被截断导致解析失败。
+const EXTRACT_MIN_TOKENS: i32 = 8192;
+
+/// 知识融合专用最小输出 token 数。
+const FUSION_MIN_TOKENS: i32 = 8192;
+
 /// 调用模型进行实体提取
 pub fn call_model_extract(
     config: &ModelConfig,
@@ -12,6 +19,8 @@ pub fn call_model_extract(
     text: &str,
 ) -> Result<ExtractedData, String> {
     let full_prompt = format!("{}{}", prompt, text);
+    // 提取任务强制使用不低于 EXTRACT_MIN_TOKENS 的输出上限，避免 JSON 被截断
+    let max_tokens = config.max_tokens.max(EXTRACT_MIN_TOKENS);
     
     match &config.provider {
         ModelProvider::Ollama {
@@ -19,7 +28,7 @@ pub fn call_model_extract(
             extract_model_name,
             ..
         } => {
-            call_ollama_api(base_url, extract_model_name, &full_prompt, config.max_tokens)
+            call_ollama_api(base_url, extract_model_name, &full_prompt, max_tokens)
                 .and_then(|response| parse_extracted_data(&response))
         }
         ModelProvider::DeepSeek {
@@ -33,9 +42,14 @@ pub fn call_model_extract(
                 model_name,
                 &full_prompt,
                 config.temperature,
-                config.max_tokens,
+                max_tokens,
             )
-            .and_then(|response| parse_extracted_data(&response))
+            .and_then(|(response, truncated)| {
+                if truncated {
+                    println!("⚠️ [提取] DeepSeek 响应被截断（max_tokens={} 不够），尝试解析部分结果", max_tokens);
+                }
+                parse_extracted_data(&response)
+            })
         }
         ModelProvider::OpenAI {
             api_key,
@@ -48,9 +62,14 @@ pub fn call_model_extract(
                 model_name,
                 &full_prompt,
                 config.temperature,
-                config.max_tokens,
+                max_tokens,
             )
-            .and_then(|response| parse_extracted_data(&response))
+            .and_then(|(response, truncated)| {
+                if truncated {
+                    println!("⚠️ [提取] API 响应被截断（max_tokens={} 不够），尝试解析部分结果", max_tokens);
+                }
+                parse_extracted_data(&response)
+            })
         }
     }
 }
@@ -74,6 +93,7 @@ pub fn call_model_fusion(
     };
     
     let full_prompt = format!("{}{}\n\n新记忆：\n{}", prompt, historical_text, new_memory);
+    let max_tokens = config.max_tokens.max(FUSION_MIN_TOKENS);
     
     match &config.provider {
         ModelProvider::Ollama {
@@ -81,7 +101,7 @@ pub fn call_model_fusion(
             model_name,
             ..
         } => {
-            call_ollama_api(base_url, model_name, &full_prompt, config.max_tokens)
+            call_ollama_api(base_url, model_name, &full_prompt, max_tokens)
                 .and_then(|response| parse_fused_knowledge(&response))
         }
         ModelProvider::DeepSeek {
@@ -95,9 +115,14 @@ pub fn call_model_fusion(
                 model_name,
                 &full_prompt,
                 config.temperature,
-                config.max_tokens,
+                max_tokens,
             )
-            .and_then(|response| parse_fused_knowledge(&response))
+            .and_then(|(response, truncated)| {
+                if truncated {
+                    println!("⚠️ [融合] DeepSeek 响应被截断，尝试解析部分结果");
+                }
+                parse_fused_knowledge(&response)
+            })
         }
         ModelProvider::OpenAI {
             api_key,
@@ -110,9 +135,14 @@ pub fn call_model_fusion(
                 model_name,
                 &full_prompt,
                 config.temperature,
-                config.max_tokens,
+                max_tokens,
             )
-            .and_then(|response| parse_fused_knowledge(&response))
+            .and_then(|(response, truncated)| {
+                if truncated {
+                    println!("⚠️ [融合] API 响应被截断，尝试解析部分结果");
+                }
+                parse_fused_knowledge(&response)
+            })
         }
     }
 }
@@ -139,7 +169,8 @@ pub fn call_model_simple(
             prompt,
             config.temperature,
             config.max_tokens,
-        ),
+        )
+        .map(|(response, _)| response),
         ModelProvider::OpenAI {
             api_key,
             base_url,
@@ -151,7 +182,8 @@ pub fn call_model_simple(
             prompt,
             config.temperature,
             config.max_tokens,
-        ),
+        )
+        .map(|(response, _)| response),
     }
 }
 
@@ -199,6 +231,7 @@ fn call_ollama_api(
 }
 
 /// 调用OpenAI兼容API（DeepSeek、OpenAI等）
+/// 返回 (响应文本, 是否被截断)
 fn call_openai_compatible_api(
     base_url: &str,
     api_key: &str,
@@ -206,7 +239,7 @@ fn call_openai_compatible_api(
     prompt: &str,
     temperature: f32,
     max_tokens: i32,
-) -> Result<String, String> {
+) -> Result<(String, bool), String> {
     let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
     let body = json!({
         "model": model,
@@ -241,38 +274,148 @@ fn call_openai_compatible_api(
     
     let json: serde_json::Value = res.json()
         .map_err(|e| format!("解析API响应失败: {}", e))?;
-    let response_text = json
+
+    let choice = json
         .get("choices")
         .and_then(|v| v.as_array())
         .and_then(|arr| arr.first())
-        .and_then(|choice| choice.get("message"))
+        .ok_or("API响应格式错误：缺少choices")?;
+
+    // 检测是否因 max_tokens 限制被截断
+    let truncated = choice
+        .get("finish_reason")
+        .and_then(|r| r.as_str())
+        .map_or(false, |r| r == "length");
+
+    let response_text = choice
+        .get("message")
         .and_then(|msg| msg.get("content"))
         .and_then(|content| content.as_str())
-        .ok_or("API响应格式错误")?
+        .ok_or("API响应格式错误：缺少content")?
         .trim()
         .to_string();
-    Ok(response_text)
+
+    Ok((response_text, truncated))
 }
 
-/// 从响应中提取JSON并解析为ExtractedData
+/// 从响应中提取JSON并解析为ExtractedData，带截断修复
 fn parse_extracted_data(response: &str) -> Result<ExtractedData, String> {
     let json_str = extract_json_from_response(response)
         .ok_or("无法从响应中提取JSON")?;
-    let data: ExtractedData = serde_json::from_str(json_str)
-        .map_err(|e| format!("解析实体数据失败: {}", e))?;
-    Ok(data)
+
+    // 先尝试完整解析
+    if let Ok(data) = serde_json::from_str::<ExtractedData>(json_str) {
+        return Ok(data);
+    }
+
+    // 完整解析失败，尝试修复被截断的 JSON 后重试
+    if let Some(repaired) = repair_truncated_json(json_str) {
+        if let Ok(data) = serde_json::from_str::<ExtractedData>(&repaired) {
+            println!("⚠️ [提取] JSON 响应不完整，已自动修复并使用部分提取结果");
+            return Ok(data);
+        }
+    }
+
+    Err(format!(
+        "解析实体数据失败：JSON 可能被截断（响应长度 {} 字符）。\
+        建议在设置中将「最大 Tokens」调高（如 8192 或以上）",
+        response.len()
+    ))
 }
 
-/// 从响应中提取JSON并解析为FusedKnowledge
+/// 从响应中提取JSON并解析为FusedKnowledge，带截断修复
 fn parse_fused_knowledge(response: &str) -> Result<FusedKnowledge, String> {
     let json_str = extract_json_from_response(response)
         .ok_or("无法从响应中提取JSON")?;
-    let data: FusedKnowledge = serde_json::from_str(json_str)
-        .map_err(|e| format!("解析融合知识失败: {}", e))?;
-    Ok(data)
+
+    if let Ok(data) = serde_json::from_str::<FusedKnowledge>(json_str) {
+        return Ok(data);
+    }
+
+    if let Some(repaired) = repair_truncated_json(json_str) {
+        if let Ok(data) = serde_json::from_str::<FusedKnowledge>(&repaired) {
+            println!("⚠️ [融合] JSON 响应不完整，已自动修复并使用部分融合结果");
+            return Ok(data);
+        }
+    }
+
+    Err(format!(
+        "解析融合知识失败：JSON 可能被截断（响应长度 {} 字符）",
+        response.len()
+    ))
 }
 
-/// 从响应中提取JSON内容
+/// 尝试修复被截断的 JSON 字符串：
+/// 找到最后一个完整的对象/数组边界，补全剩余的括号使 JSON 合法
+fn repair_truncated_json(s: &str) -> Option<String> {
+    let mut result = s.to_string();
+    let mut depth_square: i32 = 0;
+    let mut depth_curly: i32 = 0;
+    let mut in_string = false;
+    let mut escaped = false;
+    let mut last_safe_end = 0usize; // 上一个"安全"的截断点（depth_square==0 且 depth_curly==0）
+
+    for (i, ch) in result.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if in_string {
+            if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match ch {
+            '"' => in_string = true,
+            '[' => depth_square += 1,
+            ']' => {
+                depth_square -= 1;
+                if depth_square == 0 && depth_curly == 0 {
+                    last_safe_end = i + 1;
+                }
+            }
+            '{' => depth_curly += 1,
+            '}' => {
+                depth_curly -= 1;
+                if depth_square == 0 && depth_curly == 0 {
+                    last_safe_end = i + 1;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // 如果解析时还在字符串中（截断在字符串内），先关闭它
+    if in_string {
+        result.push('"');
+        // 重新检查深度不再变化，直接补全括号
+    }
+
+    // 补全未关闭的结构（从内到外）
+    for _ in 0..depth_square.max(0) {
+        result.push(']');
+    }
+    for _ in 0..depth_curly.max(0) {
+        result.push('}');
+    }
+
+    // 如果补全后解析还是失败，退而求其次：截断到最后一个安全边界
+    if last_safe_end > 0 && last_safe_end < s.len() {
+        // 返回两种候选，调用方可以都尝试一下
+        // 这里先返回补全版本，调用方失败时可以再试截断版本
+        Some(result)
+    } else if depth_square == 0 && depth_curly == 0 {
+        // 原本就是合法的，直接返回（说明问题不在括号上）
+        None
+    } else {
+        Some(result)
+    }
+}
+
+/// 从响应中提取JSON内容（去除 markdown 代码块包装）
 fn extract_json_from_response(response: &str) -> Option<&str> {
     let s = response.trim();
     // 去掉 markdown 代码块

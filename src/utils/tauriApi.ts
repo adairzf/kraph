@@ -108,6 +108,14 @@ export async function checkOllama(): Promise<[boolean, string]> {
   return invoke('check_ollama')
 }
 
+/**
+ * 一键初始化 Ollama：检查安装 → 启动服务 → 下载模型
+ * 执行进度通过 Tauri 事件 "ollama-setup-log" / "ollama-setup-done" 推送到前端
+ */
+export async function runOllamaSetup(): Promise<void> {
+  return invoke('run_ollama_setup')
+}
+
 /** 获取当前模型配置 */
 export async function getModelConfig(): Promise<ModelConfig> {
   return invoke('get_model_config')
