@@ -29,6 +29,7 @@ jobs:
               \"tag_name\": \"$TAG\",
               \"name\": \"$RELEASE_NAME\",
               \"body\": $(echo "$RELEASE_BODY" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))'),
+              \"target_commitish\": \"master\",
               \"prerelease\": false
             }")
 
