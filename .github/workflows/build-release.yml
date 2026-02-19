@@ -93,10 +93,14 @@ jobs:
         env:
           GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ github.event.inputs.tag || github.ref_name }}
           GH_REPO: ${{ github.repository }}
         run: |
-          echo "=== Fetching GitHub release for $TAG ==="
+          # 优先取手动输入的 tag，其次取 ref_name（push tag 时才是真正的 tag 名）
+          INPUT_TAG="${{ github.event.inputs.tag }}"
+          REF_TAG="${{ github.ref_name }}"
+          TAG="${INPUT_TAG:-$REF_TAG}"
+          echo "=== Fetching GitHub release for tag: $TAG ==="
+
           RELEASE_INFO=$(curl -s \
             -H "Authorization: token $GITHUB_TOKEN" \
             -H "Accept: application/vnd.github+json" \
@@ -106,10 +110,11 @@ jobs:
           RELEASE_NAME=$(echo "$RELEASE_INFO" | python3 -c "import sys,json; print(json.load(sys.stdin).get('name',''))")
 
           if [ -z "$RELEASE_ID" ]; then
-            echo "Could not find GitHub release for tag $TAG"
+            echo "Could not find GitHub release for tag: $TAG"
+            echo "Response: $RELEASE_INFO"
             exit 1
           fi
-          echo "GitHub Release ID: $RELEASE_ID"
+          echo "GitHub Release ID: $RELEASE_ID, Name: $RELEASE_NAME"
 
           echo "=== Creating Gitee release ==="
           GITEE_RESPONSE=$(curl -s -X POST "https://gitee.com/api/v5/repos/$GITEE_OWNER/$GITEE_REPO/releases" \
@@ -118,6 +123,7 @@ jobs:
               \"access_token\": \"$GITEE_TOKEN\",
               \"tag_name\": \"$TAG\",
               \"name\": \"$RELEASE_NAME\",
+              \"body\": \"Kraph $TAG\",
               \"target_commitish\": \"master\",
               \"prerelease\": false
             }")
