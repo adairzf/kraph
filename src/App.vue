@@ -12,7 +12,7 @@ import ModelIndicator from './components/ModelIndicator.vue'
 import OllamaSetupDialog from './components/OllamaSetupDialog.vue'
 import { useGraphStore } from './stores/graphStore'
 import { useOllamaStore } from './stores/ollamaStore'
-import { checkOllama, getModelConfig, openMemoriesFolder, cleanupDatabase, clearAllData } from './utils/tauriApi'
+import { checkOllama, getModelConfig, openMemoriesFolder, clearAllData } from './utils/tauriApi'
 import { onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useI18n } from 'vue-i18n'
@@ -79,16 +79,6 @@ async function onOpenMemoriesFolder() {
     await openMemoriesFolder()
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : String(e))
-  }
-}
-
-async function onCleanupDatabase() {
-  try {
-    const msg = await cleanupDatabase()
-    await graphStore.fetchGraph()
-    ElMessage.success(msg)
-  } catch (e) {
-    ElMessage.error(t('app.errors.cleanupFailed') + (e instanceof Error ? e.message : String(e)))
   }
 }
 

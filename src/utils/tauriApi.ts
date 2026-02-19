@@ -57,7 +57,14 @@ export async function searchMemoriesByEntity(
 export async function getCharacterProfile(entityId: number): Promise<{
   entity: Entity
   memories: Memory[]
-  relations: { from_entity_id: number; to_entity_id: number; relation_type: string }[]
+  relations: {
+    from_entity_id: number
+    from_name: string
+    to_entity_id: number
+    to_name: string
+    relation_type: string
+    strength: number
+  }[]
 }> {
   return invoke('get_character_profile', { entityId })
 }
