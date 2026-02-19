@@ -40,6 +40,16 @@ function cleanup() {
   unlistenDone = null
 }
 
+function open() {
+  cleanup()
+  visible.value = true
+  logs.value = []
+  isRunning.value = false
+  isDone.value = false
+  isSuccess.value = false
+  counter = 0
+}
+
 async function openAndStart() {
   // Clean up listeners from the previous run
   cleanup()
@@ -103,7 +113,7 @@ onUnmounted(() => {
   cleanup()
 })
 
-defineExpose({ openAndStart })
+defineExpose({ open, openAndStart })
 </script>
 
 <template>
@@ -193,8 +203,9 @@ defineExpose({ openAndStart })
   padding: 10px 14px;
   border-radius: 6px;
   font-size: 14px;
-  background: #f4f4f5;
-  color: #606266;
+  background: var(--bg4);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
   display: flex;
   align-items: center;
   gap: 8px;
@@ -202,18 +213,21 @@ defineExpose({ openAndStart })
 }
 
 .setup-status.running {
-  background: #ecf5ff;
-  color: #409eff;
+  background: rgba(59, 130, 246, 0.1);
+  color: #60a5fa;
+  border-color: rgba(59, 130, 246, 0.25);
 }
 
 .setup-status.success {
-  background: #f0f9eb;
-  color: #67c23a;
+  background: rgba(52, 211, 153, 0.1);
+  color: var(--green);
+  border-color: rgba(52, 211, 153, 0.25);
 }
 
 .setup-status.failed {
-  background: #fdf6ec;
-  color: #e6a23c;
+  background: rgba(251, 146, 60, 0.1);
+  color: var(--orange);
+  border-color: rgba(251, 146, 60, 0.25);
 }
 
 .spinner-icon {
@@ -229,8 +243,9 @@ defineExpose({ openAndStart })
 
 .setup-steps {
   font-size: 13px;
-  color: #606266;
-  background: #f9f9f9;
+  color: var(--text-muted);
+  background: var(--bg4);
+  border: 1px solid var(--border);
   border-radius: 6px;
   padding: 10px 14px;
 }
@@ -238,6 +253,7 @@ defineExpose({ openAndStart })
 .setup-steps p {
   margin: 0 0 6px 0;
   font-weight: 500;
+  color: var(--text);
 }
 
 .setup-steps ol {

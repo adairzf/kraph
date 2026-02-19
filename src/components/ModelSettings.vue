@@ -176,7 +176,7 @@ function getCurrentProviderInfo(): string {
       </template>
     </el-alert>
     
-    <el-form v-loading="loading" label-width="120px" class="settings-form">
+    <el-form label-position="top" v-loading="loading" label-width="120px" class="settings-form">
       <el-form-item :label="t('modelSettings.form.provider')">
         <el-radio-group v-model="providerType">
           <el-radio value="ollama">{{ t('modelSettings.form.localOllama') }}</el-radio>
@@ -248,13 +248,13 @@ function getCurrentProviderInfo(): string {
       </el-form-item>
 
       <el-form-item>
-        <el-button type="primary" @click="handleSave" :loading="loading">
+        <el-button type="primary" size="small" @click="handleSave" :loading="loading">
           {{ t('modelSettings.form.saveConfig') }}
         </el-button>
-        <el-button @click="handleTest" :loading="testing">
+        <el-button size="small" @click="handleTest" :loading="testing">
           {{ t('modelSettings.form.testConnection') }}
         </el-button>
-        <el-button @click="handleReset">
+        <el-button size="small" @click="handleReset">
           {{ t('modelSettings.form.resetDefault') }}
         </el-button>
       </el-form-item>

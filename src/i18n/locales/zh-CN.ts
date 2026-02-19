@@ -5,7 +5,7 @@ export default {
     tabs: {
       qa: '问答',
       edit: '编辑',
-      settings: '⚙️ 设置',
+      settings: '设置',
     },
     header: {
       ollamaChecking: '正在检测 Ollama 状态...',
@@ -150,7 +150,7 @@ export default {
       generalParams: '通用参数',
       temperatureTip: '较低值使输出更确定，较高值使输出更随机',
       maxTokens: '最大 Tokens',
-      saveConfig: '保存配置',
+      saveConfig: '保存',
       testConnection: '测试连接',
       resetDefault: '重置为默认',
     },

@@ -79,7 +79,7 @@ watch(
 )
 
 function openSetupDialog() {
-  setupDialogRef.value?.openAndStart()
+  setupDialogRef.value?.open()
 }
 
 function onSearchEntity() {
@@ -240,10 +240,7 @@ async function onClearAllData() {
             {{ t('app.tabs.edit') }}
           </button>
           <button class="rtab" :class="{ active: rightView === 'settings' }" @click="rightView = 'settings'">
-            <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-1px">
-              <path d="M8 10a2 2 0 1 0 0-4 2 2 0 0 0 0 4z"/>
-              <path fill-rule="evenodd" d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zM1.8 8a6.2 6.2 0 1 1 12.4 0A6.2 6.2 0 0 1 1.8 8z"/>
-            </svg>
+            {{ t('app.tabs.settings') }}
           </button>
         </div>
         <!-- Tab content -->

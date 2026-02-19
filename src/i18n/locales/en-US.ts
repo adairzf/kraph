@@ -5,7 +5,7 @@ export default {
     tabs: {
       qa: 'Q&A',
       edit: 'Edit',
-      settings: '⚙️ Settings',
+      settings: 'Settings',
     },
     header: {
       ollamaChecking: 'Checking Ollama status...',
@@ -150,9 +150,9 @@ export default {
       generalParams: 'General Parameters',
       temperatureTip: 'Lower values produce more deterministic output; higher values produce more random output',
       maxTokens: 'Max Tokens',
-      saveConfig: 'Save Config',
+      saveConfig: 'Save',
       testConnection: 'Test Connection',
-      resetDefault: 'Reset to Default',
+      resetDefault: 'Reset',
     },
     guide: {
       title: 'Usage Guide',
