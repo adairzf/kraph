@@ -24,7 +24,7 @@ const graphStore = useGraphStore()
 const chartOption = computed(() => {
   const g = graphStore.graphData
   if (!g || (!g.nodes.length && !g.links.length)) {
-    return { title: { text: '暂无图谱数据', left: 'center' } }
+    return { title: { text: 'No graph data', left: 'center' } }
   }
   const nodeColors: Record<string, string> = {
     Person: '#5470c6',
@@ -46,7 +46,7 @@ const chartOption = computed(() => {
     lineStyle: { width: Math.max(1, Math.min(l.strength, 4)) },
   }))
   return {
-    title: { text: '知识图谱', left: 'center', top: 8, textStyle: { fontSize: 16 } },
+    title: { text: 'Knowledge Graph', left: 'center', top: 8, textStyle: { fontSize: 16 } },
     tooltip: {
       formatter: (params: unknown) => {
         const p = params as { dataType?: string; data?: { name?: string; value?: string } }
@@ -94,7 +94,7 @@ onMounted(() => {
 
 <template>
   <div class="graph-panel">
-    <p v-if="graphStore.loading" class="loading">加载中…</p>
+    <p v-if="graphStore.loading" class="loading">Loading…</p>
     <p v-else-if="graphStore.error" class="error">{{ graphStore.error }}</p>
     <v-chart v-else class="chart" :option="chartOption" autoresize @click="onChartClick" />
   </div>

@@ -1,4 +1,4 @@
-//! Markdown 文件管理器：按日期组织，支持 YAML frontmatter 元数据
+//! Markdown file manager: date-based directory layout with YAML frontmatter metadata.
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -20,11 +20,11 @@ pub struct MdRecord {
     pub file_path: String,
 }
 
-/// 从内容中取标题：第一行或前 30 字符，并清理用于文件名
+/// Derive a URL-safe slug from the content's first line (max 30 chars).
 fn slug_from_content(content: &str) -> String {
     let first_line = content.lines().next().unwrap_or("").trim();
     let title: String = if first_line.is_empty() {
-        "未命名".to_string()
+        "untitled".to_string()
     } else if first_line.len() > 30 {
         first_line.chars().take(30).collect()
     } else {
@@ -41,7 +41,7 @@ fn slug_from_content(content: &str) -> String {
         .collect::<String>()
 }
 
-/// 生成新记忆的 Markdown 文件路径：memories/YYYY/MM/YYYYMMDD_HHMMSS_标题.md
+/// Build the file path for a new memory: `memories/YYYY/MM/YYYYMMDD_HHMMSS_<slug>.md`
 pub fn memory_file_path(memories_dir: &Path, content: &str) -> PathBuf {
     let now = Utc::now();
     let slug = slug_from_content(content);
@@ -49,7 +49,7 @@ pub fn memory_file_path(memories_dir: &Path, content: &str) -> PathBuf {
         "{}_{}_{}.md",
         now.format("%Y%m%d"),
         now.format("%H%M%S"),
-        if slug.is_empty() { "未命名" } else { slug.as_str() }
+        if slug.is_empty() { "untitled" } else { slug.as_str() }
     );
     memories_dir
         .join(now.format("%Y").to_string())
@@ -57,7 +57,7 @@ pub fn memory_file_path(memories_dir: &Path, content: &str) -> PathBuf {
         .join(filename)
 }
 
-/// 写入一条记忆到 Markdown 文件
+/// Write a memory to a new Markdown file.
 pub fn write_memory(
     memories_dir: &Path,
     content: &str,
@@ -88,7 +88,7 @@ pub fn write_memory(
     Ok(path)
 }
 
-/// 更新已存在文件的内容与元数据（路径不变）
+/// Update an existing Markdown file's content and metadata (path unchanged).
 pub fn update_memory_file(
     path: &Path,
     content: &str,
@@ -117,7 +117,7 @@ pub fn update_memory_file(
     Ok(())
 }
 
-/// 解析 frontmatter：简单逐行解析（不依赖 yaml crate）
+/// Parse YAML frontmatter using a simple line-by-line parser (no external YAML crate needed).
 fn parse_frontmatter(s: &str) -> Option<MdFrontmatter> {
     let s = s.trim();
     if !s.starts_with("---") {
@@ -155,7 +155,7 @@ fn parse_frontmatter(s: &str) -> Option<MdFrontmatter> {
     })
 }
 
-/// 读取一个 Markdown 记忆文件
+/// Read and parse a Markdown memory file.
 pub fn read_memory(path: &Path) -> Result<MdRecord, String> {
     let raw = fs::read_to_string(path).map_err(|e| e.to_string())?;
     let (frontmatter, content) = if raw.trim_start().starts_with("---") {
@@ -180,7 +180,7 @@ pub fn read_memory(path: &Path) -> Result<MdRecord, String> {
     })
 }
 
-/// 列出 memories 目录下所有 .md 文件（按修改时间倒序）
+/// List all `.md` files under the memories directory, sorted by modification time (newest first).
 pub fn list_memory_files(memories_dir: &Path) -> Result<Vec<PathBuf>, String> {
     if !memories_dir.exists() {
         return Ok(Vec::new());

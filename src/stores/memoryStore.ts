@@ -81,16 +81,12 @@ export const useMemoryStore = defineStore('memory', () => {
     loading.value = true
     error.value = null
     try {
-      console.log('Store: 调用 API 删除记忆', memoryId)
       await apiDeleteMemory(memoryId)
-      console.log('Store: API 删除成功，更新本地状态')
       memories.value = memories.value.filter(m => m.id !== memoryId)
       if (currentMemory.value?.id === memoryId) {
         currentMemory.value = null
       }
-      console.log('Store: 本地状态更新完成')
     } catch (e) {
-      console.error('Store: 删除失败', e)
       error.value = e instanceof Error ? e.message : String(e)
       throw e
     } finally {

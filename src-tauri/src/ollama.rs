@@ -1,8 +1,8 @@
-//! Ollama API：实体提取，支持自动启动本机 Ollama 服务
+//! Ollama API integration: entity extraction with auto-start support for the local Ollama service.
 //!
-//! 说明：实体拆分（NER）用 encoder 小模型即可（如 BERT 做序列标注），
-//! 当前通过 Ollama 用「小参数量生成模型」做抽取，以兼顾无需额外部署。
-//! 若后续接入纯 NER 模型（如 HuggingFace 中文 NER），可在此处替换为本地 encoder 调用。
+//! Note: NER tasks could use a dedicated encoder model (e.g. BERT sequence labeling),
+//! but we use a small generative model via Ollama to avoid extra deployment requirements.
+//! If a dedicated NER model is integrated later, replace the calls here with local encoder inference.
 
 use serde::{Deserialize, Serialize};
 use std::process::Stdio;
@@ -173,7 +173,7 @@ pub struct FusedKnowledge {
 
 fn extract_json_from_response(response: &str) -> Option<&str> {
     let s = response.trim();
-    // 去掉 markdown 代码块
+    // Strip markdown code fences if present
     let s = s
         .strip_prefix("```json")
         .or_else(|| s.strip_prefix("```"))
@@ -195,7 +195,7 @@ pub const ANSWER_PROMPT_PREFIX: &str = r#"你是一个记忆助手，只能根�
 "#;
 pub const ANSWER_PROMPT_SUFFIX: &str = "\n\n问题：";
 
-/// 检测 Ollama 是否已在运行（快速 GET 请求）
+/// Quick connectivity check: send a GET to /api/tags and return true on success.
 fn ollama_ping(base_url: &str) -> bool {
     let url = format!("{}/api/tags", base_url.trim_end_matches('/'));
     let client = reqwest::blocking::Client::builder()
@@ -208,7 +208,7 @@ fn ollama_ping(base_url: &str) -> bool {
     client.get(&url).send().map_or(false, |r| r.status().is_success())
 }
 
-/// 公开检测接口：返回详细的状态信息
+/// Public status check: returns `(is_running, human-readable message)`.
 pub fn check_ollama_status(base_url: &str) -> (bool, String) {
     let url = format!("{}/api/tags", base_url.trim_end_matches('/'));
     let client = reqwest::blocking::Client::builder()
@@ -216,21 +216,21 @@ pub fn check_ollama_status(base_url: &str) -> (bool, String) {
         .build();
     let client = match client {
         Ok(c) => c,
-        Err(e) => return (false, format!("创建 HTTP 客户端失败: {}", e)),
+        Err(e) => return (false, format!("Failed to create HTTP client: {}", e)),
     };
     match client.get(&url).send() {
         Ok(resp) => {
             if resp.status().is_success() {
-                (true, "Ollama 正在运行".to_string())
+                (true, "Ollama is running".to_string())
             } else {
-                (false, format!("Ollama 返回状态码: {}", resp.status()))
+                (false, format!("Ollama returned status: {}", resp.status()))
             }
         }
-        Err(e) => (false, format!("连接 Ollama 失败: {}", e)),
+        Err(e) => (false, format!("Cannot connect to Ollama: {}", e)),
     }
 }
 
-/// 检查模型是否已下载
+/// Returns true if the given model has already been pulled locally.
 pub fn check_model_exists(base_url: &str, model: &str) -> bool {
     let url = format!("{}/api/tags", base_url.trim_end_matches('/'));
     let client = reqwest::blocking::Client::builder()
@@ -257,7 +257,7 @@ pub fn check_model_exists(base_url: &str, model: &str) -> bool {
     }
 }
 
-/// 拉取模型（通过 Ollama API 的 /api/pull 端点）
+/// Pull a model via the Ollama `/api/pull` endpoint (blocking).
 pub fn pull_model(base_url: &str, model: &str) -> Result<String, String> {
     let url = format!("{}/api/pull", base_url.trim_end_matches('/'));
     let body = serde_json::json!({
@@ -265,23 +265,23 @@ pub fn pull_model(base_url: &str, model: &str) -> Result<String, String> {
         "stream": false
     });
     let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(600)) // 10 分钟，模型下载可能较慢
+        .timeout(Duration::from_secs(600)) // 10 minutes — model downloads can be slow
         .build()
         .map_err(|e| e.to_string())?;
     let res = client
         .post(&url)
         .json(&body)
         .send()
-        .map_err(|e| format!("拉取模型请求失败: {}", e))?;
+        .map_err(|e| format!("Pull request failed: {}", e))?;
     if !res.status().is_success() {
         let status = res.status();
         let err_body = res.text().unwrap_or_default();
-        return Err(format!("拉取模型失败 {}: {}", status, err_body));
+        return Err(format!("Pull failed {}: {}", status, err_body));
     }
-    Ok(format!("模型 {} 下载完成", model))
+    Ok(format!("Model {} downloaded successfully", model))
 }
 
-/// 确保模型可用：若未下载则自动拉取
+/// Ensure a model is available locally, pulling it if necessary.
 pub fn ensure_model_available(base_url: &str, model: &str) -> Result<(), String> {
     if check_model_exists(base_url, model) {
         return Ok(());
@@ -290,9 +290,9 @@ pub fn ensure_model_available(base_url: &str, model: &str) -> Result<(), String>
     Ok(())
 }
 
-/// 尝试在本地启动 ollama serve（仅当 base_url 为 localhost 时）
+/// Attempt to start the local Ollama server (only called when base_url is localhost).
 fn try_start_ollama_serve() {
-    // macOS: 优先尝试启动 Ollama.app（会自动运行 serve）
+    // On macOS prefer launching Ollama.app, which automatically starts the serve process
     #[cfg(target_os = "macos")]
     {
         let app_path = "/Applications/Ollama.app";
@@ -307,8 +307,8 @@ fn try_start_ollama_serve() {
             return;
         }
     }
-    
-    // 其他情况：尝试命令行 ollama serve
+
+    // Fallback: run `ollama serve` from the command line
     let cmd = std::env::consts::OS;
     let (bin, args): (&str, &[&str]) = if cmd == "windows" {
         ("ollama.exe", &["serve"][..])
@@ -323,13 +323,13 @@ fn try_start_ollama_serve() {
         .spawn();
 }
 
-/// 确保 Ollama 可用：若未运行则尝试启动本机 ollama serve（仅针对 localhost）
+/// Ensure Ollama is reachable, attempting to auto-start it for localhost URLs.
 pub fn ensure_ollama_running(base_url: &str) -> Result<(), String> {
     let base = base_url.trim_end_matches('/');
     if ollama_ping(base_url) {
         return Ok(());
     }
-    // 仅对 localhost 尝试自动启动
+    // Only attempt auto-start for local instances
     if base.contains("127.0.0.1") || base.contains("localhost") {
         try_start_ollama_serve();
         for i in 0..15 {
@@ -341,10 +341,10 @@ pub fn ensure_ollama_running(base_url: &str) -> Result<(), String> {
             }
         }
     }
-    Err("Ollama 未响应。请手动启动 Ollama.app 或在终端执行 ollama serve，并确保已执行：ollama pull qwen2.5:1.5b 与 ollama pull qwen2.5:7b".to_string())
+    Err("Ollama is not responding. Please start Ollama manually (open Ollama.app or run `ollama serve`) and ensure the required models are pulled: `ollama pull qwen2.5:7b`".to_string())
 }
 
-/// 将 Ollama 连接/HTTP 错误转为带提示的友好说明
+/// Map Ollama connection / HTTP errors to a user-friendly message.
 fn ollama_error_hint(err: String) -> String {
     let lower = err.to_lowercase();
     if lower.contains("502") || lower.contains("bad gateway")
@@ -352,7 +352,7 @@ fn ollama_error_hint(err: String) -> String {
         || lower.contains("connection reset")
     {
         return format!(
-            "无法连接 Ollama。\n请确认：\n1. 已安装 Ollama 并正在运行；\n2. 终端执行 ollama serve 或从应用启动；\n3. 已拉取模型：ollama pull qwen2.5:1.5b（实体拆分）、ollama pull qwen2.5:7b（问答）\n\n原始错误：{}",
+            "Cannot connect to Ollama.\nPlease check:\n1. Ollama is installed and running\n2. Run `ollama serve` or launch Ollama.app\n3. Required models are pulled: `ollama pull qwen2.5:7b`\n\nOriginal error: {}",
             err
         );
     }
@@ -418,8 +418,7 @@ pub fn call_ollama_extract_blocking(base_url: &str, model: &str, text: &str) -> 
     Ok(data)
 }
 
-/// 知识融合推理：结合历史记忆和新记忆，进行实体合并和关系推导
-/// 检查 Ollama 是否已安装（可执行文件或 macOS 应用存在）
+/// Check whether Ollama is installed (binary on PATH or macOS app bundle exists).
 pub fn check_ollama_installed() -> bool {
     #[cfg(target_os = "macos")]
     {
@@ -427,7 +426,7 @@ pub fn check_ollama_installed() -> bool {
             return true;
         }
     }
-    // 尝试执行 ollama --version，成功则说明已安装且在 PATH 中
+    // Try running `ollama --version`; success means it's installed and on PATH
     std::process::Command::new("ollama")
         .arg("--version")
         .stdin(Stdio::null())
@@ -444,7 +443,7 @@ pub fn call_ollama_knowledge_fusion(
     new_memory: &str,
 ) -> Result<FusedKnowledge, String> {
     let historical_text = if historical_memories.is_empty() {
-        "（无历史记忆）".to_string()
+        "(no historical memories)".to_string()
     } else {
         historical_memories
             .iter()
@@ -453,7 +452,7 @@ pub fn call_ollama_knowledge_fusion(
             .collect::<Vec<_>>()
             .join("\n")
     };
-    
+
     let prompt = format!(
         "{}{}{}{}",
         KNOWLEDGE_FUSION_PROMPT,
@@ -461,7 +460,7 @@ pub fn call_ollama_knowledge_fusion(
         KNOWLEDGE_FUSION_PROMPT_NEW,
         new_memory
     );
-    
+
     let url = format!("{}/api/generate", base_url.trim_end_matches('/'));
     let body = serde_json::json!({
         "model": model,
@@ -469,31 +468,31 @@ pub fn call_ollama_knowledge_fusion(
         "stream": false,
         "options": { "temperature": 0.2, "num_predict": 6144 }
     });
-    
+
     let client = reqwest::blocking::Client::new();
     let res = client
         .post(&url)
         .json(&body)
         .send()
         .map_err(|e| ollama_error_hint(e.to_string()))?;
-        
+
     if !res.status().is_success() {
         let status = res.status();
         let err_body = res.text().unwrap_or_default();
         return Err(ollama_error_hint(format!("Ollama error {}: {}", status, err_body)));
     }
-    
+
     let json: serde_json::Value = res.json().map_err(|e| ollama_error_hint(e.to_string()))?;
     let response_text = json
         .get("response")
         .and_then(|v| v.as_str())
         .ok_or("missing response field")?;
-        
+
     let json_str = extract_json_from_response(response_text)
         .ok_or("could not extract JSON from response")?;
-        
+
     let data: FusedKnowledge = serde_json::from_str(json_str)
         .map_err(|e| format!("parse JSON: {}", e))?;
-        
+
     Ok(data)
 }

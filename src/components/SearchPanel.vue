@@ -14,12 +14,12 @@ const error = ref<string | null>(null)
 
 const ollamaStore = useOllamaStore()
 
-/** 判断错误信息是否为 Ollama 服务相关的异常 */
+/** Returns true when the error message indicates an Ollama service failure. */
 function isOllamaError(msg: string): boolean {
   const keywords = [
     'ollama', 'Ollama',
-    '连接失败', 'connection refused', 'connection reset',
-    '502', 'bad gateway', '未响应', '无法连接',
+    'connection refused', 'connection reset',
+    '502', 'bad gateway',
   ]
   return keywords.some((k) => msg.includes(k))
 }
@@ -49,7 +49,7 @@ async function ask() {
         )
         ollamaStore.requestSetup()
       } catch {
-        // 用户点击了忽略，不做任何处理
+        // user dismissed the dialog
       }
     }
   } finally {

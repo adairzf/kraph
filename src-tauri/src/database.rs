@@ -1,4 +1,4 @@
-//! SQLite 数据库模块：实体、关系、记忆及关联表
+//! SQLite database module: entities, relations, memories, and their join tables.
 
 use chrono::Utc;
 use rusqlite::{params, Connection, Result as SqliteResult};
@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::sync::Mutex;
 
-/// 全局数据库连接（通过 State 管理）
+/// Global database connection managed via Tauri State.
 pub struct DbState(pub Mutex<Option<Connection>>);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -45,7 +45,7 @@ pub struct MemoryEntity {
     pub entity_id: i64,
 }
 
-/// 初始化数据库：创建或打开 DB 并执行建表
+/// Initialize the database: open (or create) the DB file and run schema migrations.
 pub fn init_db(db_path: &Path) -> SqliteResult<Connection> {
     if let Some(parent) = db_path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| {
@@ -120,7 +120,7 @@ fn init_schema(conn: &Connection) -> SqliteResult<()> {
     Ok(())
 }
 
-/// 插入或获取实体（按 type+name 唯一）
+/// Insert or update an entity (unique on type + name).
 pub fn upsert_entity(
     conn: &Connection,
     entity_type: &str,
@@ -164,7 +164,7 @@ pub fn get_entity_by_id(conn: &Connection, id: i64) -> SqliteResult<Entity> {
 }
 
 pub fn get_entity_by_name(conn: &Connection, name: &str) -> SqliteResult<Option<Entity>> {
-    // 先尝试直接匹配实体名称
+    // Try direct name match first
     let mut stmt = conn.prepare(
         "SELECT id, type, name, attributes, created_at, updated_at FROM entities WHERE name LIKE ?1 LIMIT 1",
     )?;
@@ -179,8 +179,8 @@ pub fn get_entity_by_name(conn: &Connection, name: &str) -> SqliteResult<Option<
             updated_at: row.get(5)?,
         }));
     }
-    
-    // 如果没找到，尝试通过别名查找
+
+    // Fall back to alias lookup
     let entity_id_opt: Option<i64> = conn
         .query_row(
             "SELECT entity_id FROM entity_aliases WHERE alias LIKE ?1 LIMIT 1",
@@ -188,15 +188,15 @@ pub fn get_entity_by_name(conn: &Connection, name: &str) -> SqliteResult<Option<
             |row| row.get(0),
         )
         .ok();
-    
+
     if let Some(entity_id) = entity_id_opt {
         return get_entity_by_id(conn, entity_id).map(Some);
     }
-    
+
     Ok(None)
 }
 
-/// 为实体添加别名
+/// Add an alias for an entity.
 pub fn add_entity_alias(conn: &Connection, entity_id: i64, alias: &str) -> SqliteResult<()> {
     conn.execute(
         "INSERT OR IGNORE INTO entity_aliases (entity_id, alias) VALUES (?1, ?2)",
@@ -205,16 +205,16 @@ pub fn add_entity_alias(conn: &Connection, entity_id: i64, alias: &str) -> Sqlit
     Ok(())
 }
 
-/// 获取实体的所有别名
+/// Get all aliases for an entity.
 pub fn get_entity_aliases(conn: &Connection, entity_id: i64) -> SqliteResult<Vec<String>> {
     let mut stmt = conn.prepare("SELECT alias FROM entity_aliases WHERE entity_id = ?1")?;
     let rows = stmt.query_map(params![entity_id], |row| row.get(0))?;
     rows.collect()
 }
 
-/// 通过名称或别名查找实体ID
+/// Look up an entity ID by exact name or alias.
 pub fn find_entity_id_by_name_or_alias(conn: &Connection, name: &str) -> SqliteResult<Option<i64>> {
-    // 先尝试精确匹配实体名称
+    // Try exact name match first
     let entity_id_opt: Option<i64> = conn
         .query_row(
             "SELECT id FROM entities WHERE name = ?1 LIMIT 1",
@@ -222,12 +222,12 @@ pub fn find_entity_id_by_name_or_alias(conn: &Connection, name: &str) -> SqliteR
             |row| row.get(0),
         )
         .ok();
-    
+
     if entity_id_opt.is_some() {
         return Ok(entity_id_opt);
     }
-    
-    // 尝试通过别名查找
+
+    // Fall back to alias lookup
     let alias_id_opt: Option<i64> = conn
         .query_row(
             "SELECT entity_id FROM entity_aliases WHERE alias = ?1 LIMIT 1",
@@ -235,49 +235,49 @@ pub fn find_entity_id_by_name_or_alias(conn: &Connection, name: &str) -> SqliteR
             |row| row.get(0),
         )
         .ok();
-    
+
     Ok(alias_id_opt)
 }
 
-/// 合并两个实体（将source的所有关系和别名转移到target）
+/// Merge two entities: transfer all relations and aliases from source to target.
 pub fn merge_entities(conn: &Connection, source_id: i64, target_id: i64) -> SqliteResult<()> {
-    // 1. 将source的别名转移到target
+    // 1. Reassign source's aliases to target
     conn.execute(
         "UPDATE OR IGNORE entity_aliases SET entity_id = ?1 WHERE entity_id = ?2",
         params![target_id, source_id],
     )?;
 
-    // 2. 将source的记忆关联转移到target
+    // 2. Reassign source's memory associations to target
     conn.execute(
         "UPDATE OR IGNORE memory_entities SET entity_id = ?1 WHERE entity_id = ?2",
         params![target_id, source_id],
     )?;
 
-    // 3. 将source作为from的关系转移到target
-    // UPDATE OR IGNORE：若目标已有完全相同的关系（from/to/type 三元组相同），会静默忽略
+    // 3. Reassign relations where source is the "from" entity
+    //    UPDATE OR IGNORE silently skips rows that would violate the UNIQUE constraint
     conn.execute(
         "UPDATE OR IGNORE relations SET from_entity_id = ?1 WHERE from_entity_id = ?2",
         params![target_id, source_id],
     )?;
 
-    // 4. 将source作为to的关系转移到target
+    // 4. Reassign relations where source is the "to" entity
     conn.execute(
         "UPDATE OR IGNORE relations SET to_entity_id = ?1 WHERE to_entity_id = ?2",
         params![target_id, source_id],
     )?;
 
-    // 5. 删除因 UNIQUE 冲突未能迁移、仍引用 source 的重复关系
-    //    若不清除，下一步 DELETE entities 会因外键约束失败
+    // 5. Delete any duplicate relations still referencing source (UNIQUE conflict prevented migration)
+    //    Without this step, the entity DELETE below would fail due to foreign key constraints.
     conn.execute(
         "DELETE FROM relations WHERE from_entity_id = ?1 OR to_entity_id = ?1",
         params![source_id],
     )?;
 
-    // 6. 将source的名称作为target的别名
+    // 6. Register source's name as an alias of target
     let source_entity = get_entity_by_id(conn, source_id)?;
     add_entity_alias(conn, target_id, &source_entity.name)?;
 
-    // 7. 删除source实体（entity_aliases/memory_entities 有 CASCADE，会自动清理）
+    // 7. Delete the source entity (CASCADE cleans up entity_aliases and memory_entities)
     conn.execute("DELETE FROM entities WHERE id = ?1", params![source_id])?;
 
     Ok(())
@@ -300,7 +300,7 @@ pub fn list_entities(conn: &Connection) -> SqliteResult<Vec<Entity>> {
     rows.collect()
 }
 
-/// 插入关系（若已存在则增加 strength）
+/// Insert or update a relation (increments strength on conflict).
 pub fn upsert_relation(
     conn: &Connection,
     from_entity_id: i64,
@@ -402,31 +402,31 @@ pub fn update_memory(
 }
 
 pub fn delete_memory(conn: &Connection, id: i64) -> SqliteResult<()> {
-    // 删除记忆（memory_entities 关联会因为外键 CASCADE 自动删除）
+    // Delete the memory row (memory_entities associations are removed via CASCADE)
     conn.execute("DELETE FROM memories WHERE id = ?1", params![id])?;
-    
-    // 先清理孤立的关系（引用不存在的实体）
+
+    // Remove orphaned relations (referencing non-existent entities)
     conn.execute(
         r#"DELETE FROM relations
            WHERE from_entity_id NOT IN (SELECT id FROM entities)
               OR to_entity_id NOT IN (SELECT id FROM entities)"#,
         [],
     )?;
-    
-    // 再清理孤立的实体（不被任何记忆引用）
+
+    // Remove orphaned entities (not referenced by any memory)
     conn.execute(
         "DELETE FROM entities WHERE id NOT IN (SELECT DISTINCT entity_id FROM memory_entities)",
         [],
     )?;
-    
-    // 最后再清理一次关系（因为删除实体可能产生新的孤立关系）
+
+    // Second pass: removing entities may have created new orphaned relations
     conn.execute(
         r#"DELETE FROM relations
            WHERE from_entity_id NOT IN (SELECT id FROM entities)
               OR to_entity_id NOT IN (SELECT id FROM entities)"#,
         [],
     )?;
-    
+
     Ok(())
 }
 
@@ -438,67 +438,66 @@ pub fn clear_memory_entities(conn: &Connection, memory_id: i64) -> SqliteResult<
     Ok(())
 }
 
-/// 清理数据库中的脏数据和孤立记录
+/// Remove stale/orphaned records from the database.
 pub fn cleanup_database(conn: &Connection) -> SqliteResult<()> {
-    // 临时禁用外键约束，以便清理脏数据
+    // Temporarily disable foreign keys to allow cleaning inconsistent data
     conn.execute("PRAGMA foreign_keys = OFF", [])?;
-    
-    // 1. 清理 memory_entities 中引用不存在的 memory 的记录
+
+    // 1. Remove memory_entities rows whose memory no longer exists
     conn.execute(
         "DELETE FROM memory_entities WHERE memory_id NOT IN (SELECT id FROM memories)",
         [],
     )?;
-    
-    // 2. 清理 memory_entities 中引用不存在的 entity 的记录
+
+    // 2. Remove memory_entities rows whose entity no longer exists
     conn.execute(
         "DELETE FROM memory_entities WHERE entity_id NOT IN (SELECT id FROM entities)",
         [],
     )?;
-    
-    // 3. 清理 relations 中引用不存在的 entity 的记录
+
+    // 3. Remove relations referencing non-existent entities
     conn.execute(
-        r#"DELETE FROM relations 
+        r#"DELETE FROM relations
            WHERE from_entity_id NOT IN (SELECT id FROM entities)
               OR to_entity_id NOT IN (SELECT id FROM entities)"#,
         [],
     )?;
-    
-    // 4. 清理孤立的实体（不被任何记忆引用）
+
+    // 4. Remove orphaned entities (not referenced by any memory)
     conn.execute(
         "DELETE FROM entities WHERE id NOT IN (SELECT DISTINCT entity_id FROM memory_entities)",
         [],
     )?;
-    
-    // 5. 再次清理 relations（因为删除实体可能产生新的孤立关系）
+
+    // 5. Second pass on relations (may be newly orphaned after step 4)
     conn.execute(
-        r#"DELETE FROM relations 
+        r#"DELETE FROM relations
            WHERE from_entity_id NOT IN (SELECT id FROM entities)
               OR to_entity_id NOT IN (SELECT id FROM entities)"#,
         [],
     )?;
-    
-    // 重新启用外键约束
+
     conn.execute("PRAGMA foreign_keys = ON", [])?;
-    
+
     Ok(())
 }
 
-/// 清空所有数据（保留表结构）
+/// Delete all data while preserving the schema (tables remain).
 pub fn clear_all_data(conn: &Connection) -> SqliteResult<()> {
     conn.execute("PRAGMA foreign_keys = OFF", [])?;
-    
-    // 按照依赖顺序删除数据
+
+    // Delete in dependency order
     conn.execute("DELETE FROM memory_entities", [])?;
     conn.execute("DELETE FROM relations", [])?;
     conn.execute("DELETE FROM entity_aliases", [])?;
     conn.execute("DELETE FROM memories", [])?;
     conn.execute("DELETE FROM entities", [])?;
-    
-    // 重置自增ID
+
+    // Reset auto-increment counters
     conn.execute("DELETE FROM sqlite_sequence", [])?;
-    
+
     conn.execute("PRAGMA foreign_keys = ON", [])?;
-    
+
     Ok(())
 }
 

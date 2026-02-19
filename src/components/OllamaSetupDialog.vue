@@ -41,10 +41,10 @@ function cleanup() {
 }
 
 async function openAndStart() {
-  // 清理上一次的监听器
+  // Clean up listeners from the previous run
   cleanup()
 
-  // 重置状态
+  // Reset state
   visible.value = true
   logs.value = []
   isRunning.value = true
@@ -52,7 +52,7 @@ async function openAndStart() {
   isSuccess.value = false
   counter = 0
 
-  // 先注册事件监听，再触发后端命令，避免错过事件
+  // Register event listeners before invoking the backend command to avoid missing early events
   unlistenLog = await listen<{ message: string; status: string }>(
     'ollama-setup-log',
     (event: TauriEvent<{ message: string; status: string }>) => {
@@ -141,7 +141,7 @@ defineExpose({ openAndStart })
         </ol>
       </div>
 
-      <!-- 日志输出区域 -->
+      <!-- Log output area -->
       <div v-if="logs.length > 0 || isRunning" class="log-container" ref="logContainer">
         <div
           v-for="entry in logs"

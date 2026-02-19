@@ -266,7 +266,7 @@ async function handleSave() {
     await graphStore.fetchGraph()
     text.value = ''
     emit('update:modelValue', '')
-    // 保存完成后短暂展示结果，再淡出
+    // Briefly show the completed progress before fading out
     await new Promise((resolve) => setTimeout(resolve, 2500))
     saveProgress.value = []
   } catch {
@@ -306,7 +306,7 @@ async function handleSave() {
     <p v-if="whisperProgress" class="voice-progress">{{ whisperProgress }}</p>
     <p v-if="voiceError" class="voice-error">{{ voiceError }}</p>
 
-    <!-- 保存进度 -->
+    <!-- Save progress panel -->
     <div v-if="saveProgress.length > 0" class="save-progress">
       <div
         v-for="(step, i) in saveProgress"
@@ -386,7 +386,7 @@ async function handleSave() {
   color: #0a7f8c;
 }
 
-/* 保存进度面板 */
+/* Save progress panel */
 .save-progress {
   margin-top: 0.6rem;
   padding: 0.5rem 0.6rem;

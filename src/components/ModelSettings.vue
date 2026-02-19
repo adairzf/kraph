@@ -18,7 +18,7 @@ const config = ref<ModelConfig>({
 
 const providerType = ref<ModelProviderType>('ollama')
 
-// 临时表单数据
+// Local form state (not yet persisted)
 const ollamaForm = ref<OllamaProvider>({ ...DEFAULT_OLLAMA_CONFIG })
 const deepseekForm = ref<DeepSeekProvider>({ ...DEFAULT_DEEPSEEK_CONFIG })
 const openaiForm = ref<OpenAIProvider>({ ...DEFAULT_OPENAI_CONFIG })
@@ -185,7 +185,7 @@ function getCurrentProviderInfo(): string {
         </el-radio-group>
       </el-form-item>
 
-      <!-- Ollama 配置 -->
+      <!-- Ollama settings -->
       <template v-if="providerType === 'ollama'">
         <el-divider content-position="left">{{ t('modelSettings.form.ollamaConfig') }}</el-divider>
         <el-form-item :label="t('modelSettings.form.serviceUrl')">
@@ -201,7 +201,7 @@ function getCurrentProviderInfo(): string {
         </el-form-item>
       </template>
 
-      <!-- DeepSeek 配置 -->
+      <!-- DeepSeek settings -->
       <template v-if="providerType === 'deepseek'">
         <el-divider content-position="left">{{ t('modelSettings.form.deepseekConfig') }}</el-divider>
         <el-form-item :label="t('modelSettings.form.apiKey')" required>
@@ -222,7 +222,7 @@ function getCurrentProviderInfo(): string {
         </el-form-item>
       </template>
 
-      <!-- OpenAI 配置 -->
+      <!-- OpenAI settings -->
       <template v-if="providerType === 'openai'">
         <el-divider content-position="left">{{ t('modelSettings.form.openaiConfig') }}</el-divider>
         <el-form-item :label="t('modelSettings.form.apiKey')" required>
@@ -237,7 +237,7 @@ function getCurrentProviderInfo(): string {
         </el-form-item>
       </template>
 
-      <!-- 通用参数 -->
+      <!-- General parameters -->
       <el-divider content-position="left">{{ t('modelSettings.form.generalParams') }}</el-divider>
       <el-form-item label="Temperature">
         <el-slider v-model="config.temperature" :min="0" :max="1" :step="0.1" show-input />

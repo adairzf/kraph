@@ -1,27 +1,27 @@
-//! 通用模型调用接口：支持Ollama、DeepSeek、OpenAI等
+//! Generic model client: supports Ollama, DeepSeek, OpenAI, and any OpenAI-compatible API.
 
 use crate::model_config::{ModelConfig, ModelProvider};
 use crate::ollama::{ExtractedData, FusedKnowledge};
 use serde_json::json;
 use std::time::Duration;
 
-/// 实体提取专用最小输出 token 数。
-/// 提取任务需要输出完整的大型 JSON，必须给足空间，否则 JSON 会被截断导致解析失败。
+/// Minimum output token budget for entity extraction.
+/// Extraction produces large JSON objects; too small a budget causes truncated, unparseable output.
 const EXTRACT_MIN_TOKENS: i32 = 8192;
 
-/// 知识融合专用最小输出 token 数。
+/// Minimum output token budget for knowledge fusion.
 const FUSION_MIN_TOKENS: i32 = 8192;
 
-/// 调用模型进行实体提取
+/// Call the configured model for entity extraction.
 pub fn call_model_extract(
     config: &ModelConfig,
     prompt: &str,
     text: &str,
 ) -> Result<ExtractedData, String> {
     let full_prompt = format!("{}{}", prompt, text);
-    // 提取任务强制使用不低于 EXTRACT_MIN_TOKENS 的输出上限，避免 JSON 被截断
+    // Extraction requires at least EXTRACT_MIN_TOKENS to avoid JSON truncation
     let max_tokens = config.max_tokens.max(EXTRACT_MIN_TOKENS);
-    
+
     match &config.provider {
         ModelProvider::Ollama {
             base_url,
@@ -46,7 +46,7 @@ pub fn call_model_extract(
             )
             .and_then(|(response, truncated)| {
                 if truncated {
-                    println!("⚠️ [提取] DeepSeek 响应被截断（max_tokens={} 不够），尝试解析部分结果", max_tokens);
+                    println!("⚠️ [extract] DeepSeek response truncated (max_tokens={} too low), attempting partial parse", max_tokens);
                 }
                 parse_extracted_data(&response)
             })
@@ -66,7 +66,7 @@ pub fn call_model_extract(
             )
             .and_then(|(response, truncated)| {
                 if truncated {
-                    println!("⚠️ [提取] API 响应被截断（max_tokens={} 不够），尝试解析部分结果", max_tokens);
+                    println!("⚠️ [extract] API response truncated (max_tokens={} too low), attempting partial parse", max_tokens);
                 }
                 parse_extracted_data(&response)
             })
@@ -74,7 +74,7 @@ pub fn call_model_extract(
     }
 }
 
-/// 调用模型进行知识融合
+/// Call the configured model for knowledge fusion.
 pub fn call_model_fusion(
     config: &ModelConfig,
     prompt: &str,
@@ -82,7 +82,7 @@ pub fn call_model_fusion(
     new_memory: &str,
 ) -> Result<FusedKnowledge, String> {
     let historical_text = if historical_memories.is_empty() {
-        "（无历史记忆）".to_string()
+        "(no historical memories)".to_string()
     } else {
         historical_memories
             .iter()
@@ -91,10 +91,10 @@ pub fn call_model_fusion(
             .collect::<Vec<_>>()
             .join("\n")
     };
-    
-    let full_prompt = format!("{}{}\n\n新记忆：\n{}", prompt, historical_text, new_memory);
+
+    let full_prompt = format!("{}{}\n\nNew memory:\n{}", prompt, historical_text, new_memory);
     let max_tokens = config.max_tokens.max(FUSION_MIN_TOKENS);
-    
+
     match &config.provider {
         ModelProvider::Ollama {
             base_url,
@@ -119,7 +119,7 @@ pub fn call_model_fusion(
             )
             .and_then(|(response, truncated)| {
                 if truncated {
-                    println!("⚠️ [融合] DeepSeek 响应被截断，尝试解析部分结果");
+                    println!("⚠️ [fusion] DeepSeek response truncated, attempting partial parse");
                 }
                 parse_fused_knowledge(&response)
             })
@@ -139,7 +139,7 @@ pub fn call_model_fusion(
             )
             .and_then(|(response, truncated)| {
                 if truncated {
-                    println!("⚠️ [融合] API 响应被截断，尝试解析部分结果");
+                    println!("⚠️ [fusion] API response truncated, attempting partial parse");
                 }
                 parse_fused_knowledge(&response)
             })
@@ -147,7 +147,7 @@ pub fn call_model_fusion(
     }
 }
 
-/// 调用模型进行简单问答
+/// Call the configured model for a simple single-turn prompt.
 pub fn call_model_simple(
     config: &ModelConfig,
     prompt: &str,
@@ -187,7 +187,7 @@ pub fn call_model_simple(
     }
 }
 
-/// 调用Ollama API
+/// Call the Ollama `/api/generate` endpoint (blocking).
 fn call_ollama_api(
     base_url: &str,
     model: &str,
@@ -201,37 +201,37 @@ fn call_ollama_api(
         "stream": false,
         "options": { "temperature": 0.2, "num_predict": max_tokens }
     });
-    
+
     let client = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(300))
         .build()
         .map_err(|e| e.to_string())?;
-        
+
     let res = client
         .post(&url)
         .json(&body)
         .send()
-        .map_err(|e| format!("Ollama请求失败: {}", e))?;
-        
+        .map_err(|e| format!("Ollama request failed: {}", e))?;
+
     if !res.status().is_success() {
         let status = res.status();
         let err_body = res.text().unwrap_or_default();
-        return Err(format!("Ollama错误 {}: {}", status, err_body));
+        return Err(format!("Ollama error {}: {}", status, err_body));
     }
-    
+
     let json: serde_json::Value = res.json()
-        .map_err(|e| format!("解析Ollama响应失败: {}", e))?;
+        .map_err(|e| format!("Failed to parse Ollama response: {}", e))?;
     let response_text = json
         .get("response")
         .and_then(|v| v.as_str())
-        .ok_or("Ollama响应缺少response字段")?
+        .ok_or("Ollama response missing 'response' field")?
         .trim()
         .to_string();
     Ok(response_text)
 }
 
-/// 调用OpenAI兼容API（DeepSeek、OpenAI等）
-/// 返回 (响应文本, 是否被截断)
+/// Call an OpenAI-compatible chat completions API (DeepSeek, OpenAI, etc.).
+/// Returns `(response_text, truncated)` where `truncated` is true when `finish_reason == "length"`.
 fn call_openai_compatible_api(
     base_url: &str,
     api_key: &str,
@@ -252,36 +252,36 @@ fn call_openai_compatible_api(
         "temperature": temperature,
         "max_tokens": max_tokens
     });
-    
+
     let client = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(300))
         .build()
         .map_err(|e| e.to_string())?;
-        
+
     let res = client
         .post(&url)
         .header("Authorization", format!("Bearer {}", api_key))
         .header("Content-Type", "application/json")
         .json(&body)
         .send()
-        .map_err(|e| format!("API请求失败: {}", e))?;
-        
+        .map_err(|e| format!("API request failed: {}", e))?;
+
     if !res.status().is_success() {
         let status = res.status();
         let err_body = res.text().unwrap_or_default();
-        return Err(format!("API错误 {}: {}", status, err_body));
+        return Err(format!("API error {}: {}", status, err_body));
     }
-    
+
     let json: serde_json::Value = res.json()
-        .map_err(|e| format!("解析API响应失败: {}", e))?;
+        .map_err(|e| format!("Failed to parse API response: {}", e))?;
 
     let choice = json
         .get("choices")
         .and_then(|v| v.as_array())
         .and_then(|arr| arr.first())
-        .ok_or("API响应格式错误：缺少choices")?;
+        .ok_or("API response missing 'choices'")?;
 
-    // 检测是否因 max_tokens 限制被截断
+    // Detect truncation due to max_tokens limit
     let truncated = choice
         .get("finish_reason")
         .and_then(|r| r.as_str())
@@ -291,42 +291,44 @@ fn call_openai_compatible_api(
         .get("message")
         .and_then(|msg| msg.get("content"))
         .and_then(|content| content.as_str())
-        .ok_or("API响应格式错误：缺少content")?
+        .ok_or("API response missing 'content'")?
         .trim()
         .to_string();
 
     Ok((response_text, truncated))
 }
 
-/// 从响应中提取JSON并解析为ExtractedData，带截断修复
+/// Extract JSON from the model response and parse it as `ExtractedData`.
+/// Attempts to repair truncated JSON before giving up.
 fn parse_extracted_data(response: &str) -> Result<ExtractedData, String> {
     let json_str = extract_json_from_response(response)
-        .ok_or("无法从响应中提取JSON")?;
+        .ok_or("Could not find JSON in response")?;
 
-    // 先尝试完整解析
+    // Try full parse first
     if let Ok(data) = serde_json::from_str::<ExtractedData>(json_str) {
         return Ok(data);
     }
 
-    // 完整解析失败，尝试修复被截断的 JSON 后重试
+    // Attempt to repair a truncated JSON string and retry
     if let Some(repaired) = repair_truncated_json(json_str) {
         if let Ok(data) = serde_json::from_str::<ExtractedData>(&repaired) {
-            println!("⚠️ [提取] JSON 响应不完整，已自动修复并使用部分提取结果");
+            println!("⚠️ [extract] Incomplete JSON auto-repaired; using partial extraction results");
             return Ok(data);
         }
     }
 
     Err(format!(
-        "解析实体数据失败：JSON 可能被截断（响应长度 {} 字符）。\
-        建议在设置中将「最大 Tokens」调高（如 8192 或以上）",
+        "Failed to parse entity data: JSON may be truncated (response length: {} chars). \
+        Try increasing 'Max Tokens' in Settings (e.g. 8192 or higher).",
         response.len()
     ))
 }
 
-/// 从响应中提取JSON并解析为FusedKnowledge，带截断修复
+/// Extract JSON from the model response and parse it as `FusedKnowledge`.
+/// Attempts to repair truncated JSON before giving up.
 fn parse_fused_knowledge(response: &str) -> Result<FusedKnowledge, String> {
     let json_str = extract_json_from_response(response)
-        .ok_or("无法从响应中提取JSON")?;
+        .ok_or("Could not find JSON in response")?;
 
     if let Ok(data) = serde_json::from_str::<FusedKnowledge>(json_str) {
         return Ok(data);
@@ -334,26 +336,29 @@ fn parse_fused_knowledge(response: &str) -> Result<FusedKnowledge, String> {
 
     if let Some(repaired) = repair_truncated_json(json_str) {
         if let Ok(data) = serde_json::from_str::<FusedKnowledge>(&repaired) {
-            println!("⚠️ [融合] JSON 响应不完整，已自动修复并使用部分融合结果");
+            println!("⚠️ [fusion] Incomplete JSON auto-repaired; using partial fusion results");
             return Ok(data);
         }
     }
 
     Err(format!(
-        "解析融合知识失败：JSON 可能被截断（响应长度 {} 字符）",
+        "Failed to parse fused knowledge: JSON may be truncated (response length: {} chars).",
         response.len()
     ))
 }
 
-/// 尝试修复被截断的 JSON 字符串：
-/// 找到最后一个完整的对象/数组边界，补全剩余的括号使 JSON 合法
+/// Try to repair a truncated JSON string by closing unclosed brackets/braces.
+///
+/// Walks the string character-by-character tracking bracket depth and string state,
+/// then appends the missing closing characters. Falls back to the last "safe" boundary
+/// if bracket-patching alone is insufficient.
 fn repair_truncated_json(s: &str) -> Option<String> {
     let mut result = s.to_string();
     let mut depth_square: i32 = 0;
     let mut depth_curly: i32 = 0;
     let mut in_string = false;
     let mut escaped = false;
-    let mut last_safe_end = 0usize; // 上一个"安全"的截断点（depth_square==0 且 depth_curly==0）
+    let mut last_safe_end = 0usize; // last position where both depths were 0
 
     for (i, ch) in result.char_indices() {
         if escaped {
@@ -388,13 +393,12 @@ fn repair_truncated_json(s: &str) -> Option<String> {
         }
     }
 
-    // 如果解析时还在字符串中（截断在字符串内），先关闭它
+    // Close an unterminated string literal
     if in_string {
         result.push('"');
-        // 重新检查深度不再变化，直接补全括号
     }
 
-    // 补全未关闭的结构（从内到外）
+    // Append missing closing brackets/braces (innermost first)
     for _ in 0..depth_square.max(0) {
         result.push(']');
     }
@@ -402,23 +406,20 @@ fn repair_truncated_json(s: &str) -> Option<String> {
         result.push('}');
     }
 
-    // 如果补全后解析还是失败，退而求其次：截断到最后一个安全边界
+    // If patching still won't parse, the caller can try truncating to last_safe_end
     if last_safe_end > 0 && last_safe_end < s.len() {
-        // 返回两种候选，调用方可以都尝试一下
-        // 这里先返回补全版本，调用方失败时可以再试截断版本
         Some(result)
     } else if depth_square == 0 && depth_curly == 0 {
-        // 原本就是合法的，直接返回（说明问题不在括号上）
+        // Already balanced — nothing to repair
         None
     } else {
         Some(result)
     }
 }
 
-/// 从响应中提取JSON内容（去除 markdown 代码块包装）
+/// Strip markdown code fences and extract the raw JSON content from a model response.
 fn extract_json_from_response(response: &str) -> Option<&str> {
     let s = response.trim();
-    // 去掉 markdown 代码块
     let s = s
         .strip_prefix("```json")
         .or_else(|| s.strip_prefix("```"))

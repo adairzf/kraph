@@ -98,35 +98,35 @@ export async function answerQuestion(question: string): Promise<string> {
   return invoke('answer_question', { question })
 }
 
-/** 下载并打开 Ollama 安装程序（Win/Mac 下载安装包并打开，Linux 打开下载页） */
+/** Download and open the Ollama installer (Win/Mac: download package; Linux: open download page). */
 export async function downloadOllamaInstaller(): Promise<string> {
   return invoke('download_ollama_installer')
 }
 
-/** 检测 Ollama 服务状态 */
+/** Check the Ollama service status. */
 export async function checkOllama(): Promise<[boolean, string]> {
   return invoke('check_ollama')
 }
 
 /**
- * 一键初始化 Ollama：检查安装 → 启动服务 → 下载模型
- * 执行进度通过 Tauri 事件 "ollama-setup-log" / "ollama-setup-done" 推送到前端
+ * One-click Ollama setup: check install → start service → pull model.
+ * Progress is delivered to the frontend via Tauri events "ollama-setup-log" / "ollama-setup-done".
  */
 export async function runOllamaSetup(): Promise<void> {
   return invoke('run_ollama_setup')
 }
 
-/** 获取当前模型配置 */
+/** Get the current model configuration. */
 export async function getModelConfig(): Promise<ModelConfig> {
   return invoke('get_model_config')
 }
 
-/** 更新模型配置 */
+/** Persist an updated model configuration. */
 export async function updateModelConfig(config: ModelConfig): Promise<void> {
   return invoke('update_model_config', { newConfig: config })
 }
 
-/** 测试模型配置是否可用 */
+/** Test whether the current model configuration is reachable. */
 export async function testModelConfig(config: ModelConfig): Promise<string> {
   return invoke('test_model_config', { config })
 }

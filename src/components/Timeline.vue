@@ -21,8 +21,8 @@ function formatDate(created: string) {
 
 <template>
   <div class="timeline">
-    <h2 class="panel-title">时间轴</h2>
-    <p v-if="memoryStore.loading" class="loading">加载中…</p>
+    <h2 class="panel-title">Timeline</h2>
+    <p v-if="memoryStore.loading" class="loading">Loading…</p>
     <p v-else-if="memoryStore.error" class="error">{{ memoryStore.error }}</p>
     <div v-else class="timeline-list">
       <div

@@ -1,4 +1,4 @@
-//! 通过应用内按钮下载并打开 Ollama 安装程序
+//! Download and open the Ollama installer via an in-app button.
 
 use std::io::Write;
 use std::path::PathBuf;
@@ -7,7 +7,7 @@ const OLLAMA_DOWNLOAD_PAGE: &str = "https://ollama.com/download";
 const WINDOWS_INSTALLER_URL: &str = "https://ollama.com/download/OllamaSetup.exe";
 const MACOS_INSTALLER_URL: &str = "https://ollama.com/download/Ollama.dmg";
 
-/// 获取当前系统对应的 Ollama 安装包下载 URL
+/// Return the installer download URL for the current OS, or `None` for Linux.
 fn get_installer_url() -> Option<&'static str> {
     match std::env::consts::OS {
         "windows" => Some(WINDOWS_INSTALLER_URL),
@@ -16,7 +16,7 @@ fn get_installer_url() -> Option<&'static str> {
     }
 }
 
-/// 下载到临时文件并返回路径
+/// Download a URL to a temporary file and return the path.
 fn download_to_temp(url: &str, filename: &str) -> Result<PathBuf, String> {
     let client = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(60))
@@ -25,20 +25,20 @@ fn download_to_temp(url: &str, filename: &str) -> Result<PathBuf, String> {
     let resp = client
         .get(url)
         .send()
-        .map_err(|e| format!("下载失败: {}", e))?;
+        .map_err(|e| format!("Download failed: {}", e))?;
     if !resp.status().is_success() {
-        return Err(format!("下载返回错误: {}", resp.status()));
+        return Err(format!("Download returned error: {}", resp.status()));
     }
     let bytes = resp.bytes().map_err(|e| e.to_string())?;
     let temp_dir = std::env::temp_dir();
     let path = temp_dir.join(filename);
-    let mut f = std::fs::File::create(&path).map_err(|e| format!("创建临时文件失败: {}", e))?;
-    f.write_all(&bytes).map_err(|e| format!("写入失败: {}", e))?;
+    let mut f = std::fs::File::create(&path).map_err(|e| format!("Failed to create temp file: {}", e))?;
+    f.write_all(&bytes).map_err(|e| format!("Write failed: {}", e))?;
     f.sync_all().map_err(|e| e.to_string())?;
     Ok(path)
 }
 
-/// 用系统默认方式打开文件（安装程序）
+/// Open a file using the system default handler (i.e. run the installer).
 fn open_installer(path: &std::path::Path) -> Result<(), String> {
     let path_str = path.to_string_lossy();
     #[cfg(target_os = "windows")]
@@ -46,30 +46,31 @@ fn open_installer(path: &std::path::Path) -> Result<(), String> {
         std::process::Command::new("cmd")
             .args(["/C", "start", "", path_str.as_ref()])
             .spawn()
-            .map_err(|e| format!("打开安装程序失败: {}", e))?;
+            .map_err(|e| format!("Failed to open installer: {}", e))?;
     }
     #[cfg(target_os = "macos")]
     {
         std::process::Command::new("open")
             .arg(path)
             .spawn()
-            .map_err(|e| format!("打开安装程序失败: {}", e))?;
+            .map_err(|e| format!("Failed to open installer: {}", e))?;
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
         let _ = path_str;
-        return Err("当前系统请使用浏览器打开下载页".to_string());
+        return Err("Please open the download page in your browser for this platform.".to_string());
     }
     Ok(())
 }
 
-/// 下载并打开 Ollama 安装程序；Linux 则只在浏览器打开下载页
+/// Download and launch the Ollama installer.
+/// On Linux, opens the download page in the default browser instead.
 pub fn download_and_open_ollama_installer() -> Result<String, String> {
     let url = match get_installer_url() {
         Some(u) => u,
         None => {
             open_download_page_in_browser()?;
-            return Ok("已在浏览器打开 Ollama 下载页，请选择适合您系统的版本下载安装。".to_string());
+            return Ok("Opened the Ollama download page in your browser. Please select the version for your system.".to_string());
         }
     };
 
@@ -82,19 +83,19 @@ pub fn download_and_open_ollama_installer() -> Result<String, String> {
     match download_to_temp(url, filename) {
         Ok(path) => {
             open_installer(&path)?;
-            Ok("Ollama 安装包已下载并打开，请按提示完成安装。安装完成后可回到本应用使用。".to_string())
+            Ok("Ollama installer downloaded and opened. Please follow the prompts to complete installation.".to_string())
         }
         Err(e) => {
             let _ = open_download_page_in_browser();
             Err(format!(
-                "{} 已改为在浏览器打开下载页，请手动下载安装。",
+                "{} — opened the download page in your browser as a fallback. Please install manually.",
                 e
             ))
         }
     }
 }
 
-/// 在默认浏览器中打开 Ollama 下载页
+/// Open the Ollama download page in the system default browser.
 pub fn open_download_page_in_browser() -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
@@ -119,7 +120,7 @@ pub fn open_download_page_in_browser() -> Result<(), String> {
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
     {
-        return Err("无法打开浏览器".to_string());
+        return Err("Cannot open browser on this platform.".to_string());
     }
     Ok(())
 }

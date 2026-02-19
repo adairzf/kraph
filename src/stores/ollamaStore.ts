@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 
 export const useOllamaStore = defineStore('ollama', () => {
-  // 是否请求打开初始化弹窗（由其他组件触发，App.vue 监听并响应）
+  // Whether a setup dialog open has been requested (triggered by other components; App.vue listens and responds)
   const setupRequested = ref(false)
 
   function requestSetup() {

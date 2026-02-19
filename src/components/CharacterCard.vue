@@ -85,26 +85,24 @@ function preview(content: string) {
   return content.length > 80 ? content.slice(0, 80) + '…' : content
 }
 
-// 解析 attributes 并提取所有标签
+// Parse the attributes JSON and flatten all values into individual tags.
 function parseAttributes(attributes: string | null | undefined): string[] {
   if (!attributes) return []
-  
+
   try {
     const attrs = typeof attributes === 'string' ? JSON.parse(attributes) : attributes
     const tags: string[] = []
-    
-    // 遍历所有属性值，将逗号分隔的值拆分成单独的标签
+
+    // Split comma-separated attribute values into individual tag strings
     Object.values(attrs).forEach((value) => {
       if (typeof value === 'string') {
-        // 按逗号分隔并去除空格
         const splitTags = value.split(',').map(tag => tag.trim()).filter(tag => tag)
         tags.push(...splitTags)
       }
     })
-    
+
     return tags
-  } catch (e) {
-    // 如果解析失败，返回空数组
+  } catch {
     return []
   }
 }

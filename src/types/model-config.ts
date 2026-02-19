@@ -1,4 +1,4 @@
-// 模型配置相关类型定义
+// Type definitions for model configuration
 
 export type ModelProviderType = 'ollama' | 'deepseek' | 'openai'
 

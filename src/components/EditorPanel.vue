@@ -66,7 +66,7 @@ async function handleDelete() {
       deleting.value = false
     }
   } catch {
-    // user cancelled
+    // user cancelled delete
   }
 }
 </script>

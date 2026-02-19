@@ -1,4 +1,4 @@
-//! 模型配置模块：支持本地Ollama和在线API（DeepSeek等）
+//! Model configuration module: supports local Ollama and cloud APIs (DeepSeek, OpenAI, etc.)
 
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -60,21 +60,21 @@ impl ModelConfig {
             return Ok(Self::default());
         }
         let content = fs::read_to_string(path)
-            .map_err(|e| format!("读取配置文件失败: {}", e))?;
+            .map_err(|e| format!("Failed to read config file: {}", e))?;
         let config: ModelConfig = serde_json::from_str(&content)
-            .map_err(|e| format!("解析配置文件失败: {}", e))?;
+            .map_err(|e| format!("Failed to parse config file: {}", e))?;
         Ok(config)
     }
 
     pub fn save_to_file(&self, path: &Path) -> Result<(), String> {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)
-                .map_err(|e| format!("创建配置目录失败: {}", e))?;
+                .map_err(|e| format!("Failed to create config directory: {}", e))?;
         }
         let content = serde_json::to_string_pretty(self)
-            .map_err(|e| format!("序列化配置失败: {}", e))?;
+            .map_err(|e| format!("Failed to serialize config: {}", e))?;
         fs::write(path, content)
-            .map_err(|e| format!("写入配置文件失败: {}", e))?;
+            .map_err(|e| format!("Failed to write config file: {}", e))?;
         Ok(())
     }
 }

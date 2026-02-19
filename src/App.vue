@@ -32,12 +32,12 @@ const ollamaStore = useOllamaStore()
 const searchName = ref('')
 const leftSidebarCollapsed = ref(false)
 
-// Ollama 状态
+// Ollama status
 const ollamaChecking = ref(true)
 const ollamaRunning = ref(false)
 const isOllamaProvider = ref(false)
 
-// 初始化弹窗 ref
+// Ref to the setup dialog component
 const setupDialogRef = ref<InstanceType<typeof OllamaSetupDialog> | null>(null)
 
 onMounted(async () => {
@@ -49,13 +49,13 @@ onMounted(async () => {
       ollamaRunning.value = running
     }
   } catch {
-    // 忽略初始化检测错误
+    // Ignore startup check errors silently
   } finally {
     ollamaChecking.value = false
   }
 })
 
-// 监听其他组件（如 SearchPanel）发出的初始化请求
+// Listen for setup requests emitted by child components (e.g. SearchPanel)
 watch(
   () => ollamaStore.setupRequested,
   (val: boolean) => {
@@ -126,7 +126,7 @@ async function onClearAllData() {
       <div class="header-actions">
         <ModelIndicator />
 
-        <!-- Ollama 状态按钮：仅在使用 Ollama 提供商时显示 -->
+        <!-- Ollama status button: only shown when the Ollama provider is active -->
         <button
           v-if="isOllamaProvider || ollamaChecking"
           type="button"
@@ -168,7 +168,7 @@ async function onClearAllData() {
         </button>
       </div>
 
-      <!-- Ollama 初始化弹窗 -->
+      <!-- Ollama setup dialog -->
       <OllamaSetupDialog ref="setupDialogRef" />
     </header>
     <div class="main">
@@ -291,7 +291,7 @@ async function onClearAllData() {
   gap: 0.5rem;
   flex-wrap: wrap;
 }
-/* Ollama 一体化状态按钮 */
+/* Ollama integrated status button */
 .btn-ollama-status {
   padding: 0.35rem 0.75rem;
   font-size: 0.8125rem;
