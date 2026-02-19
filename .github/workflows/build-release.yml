@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release (e.g. v0.1.0)'
+        required: true
+        default: 'v0.1.0'
 
 jobs:
   # ── 多平台构建 ──────────────────────────────────────────────
@@ -52,8 +58,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: Kraph ${{ github.ref_name }}
+          tagName: ${{ github.event.inputs.tag || github.ref_name }}
+          releaseName: Kraph ${{ github.event.inputs.tag || github.ref_name }}
           releaseBody: |
             ## 下载 / Download
 
@@ -84,7 +90,7 @@ jobs:
         env:
           GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
           GH_REPO: ${{ github.repository }}
         run: |
           echo "=== Fetching GitHub release for $TAG ==="
