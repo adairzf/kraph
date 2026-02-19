@@ -40,11 +40,11 @@ fn download_to_temp(url: &str, filename: &str) -> Result<PathBuf, String> {
 
 /// Open a file using the system default handler (i.e. run the installer).
 fn open_installer(path: &std::path::Path) -> Result<(), String> {
-    let path_str = path.to_string_lossy();
+    let _path_str = path.to_string_lossy();
     #[cfg(target_os = "windows")]
     {
         std::process::Command::new("cmd")
-            .args(["/C", "start", "", path_str.as_ref()])
+            .args(["/C", "start", "", _path_str.as_ref()])
             .spawn()
             .map_err(|e| format!("Failed to open installer: {}", e))?;
     }
@@ -57,7 +57,6 @@ fn open_installer(path: &std::path::Path) -> Result<(), String> {
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
-        let _ = path_str;
         return Err("Please open the download page in your browser for this platform.".to_string());
     }
     Ok(())

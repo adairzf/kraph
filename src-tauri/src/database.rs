@@ -39,12 +39,6 @@ pub struct Memory {
     pub tags: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MemoryEntity {
-    pub memory_id: i64,
-    pub entity_id: i64,
-}
-
 /// Initialize the database: open (or create) the DB file and run schema migrations.
 pub fn init_db(db_path: &Path) -> SqliteResult<Connection> {
     if let Some(parent) = db_path.parent() {
@@ -203,13 +197,6 @@ pub fn add_entity_alias(conn: &Connection, entity_id: i64, alias: &str) -> Sqlit
         params![entity_id, alias],
     )?;
     Ok(())
-}
-
-/// Get all aliases for an entity.
-pub fn get_entity_aliases(conn: &Connection, entity_id: i64) -> SqliteResult<Vec<String>> {
-    let mut stmt = conn.prepare("SELECT alias FROM entity_aliases WHERE entity_id = ?1")?;
-    let rows = stmt.query_map(params![entity_id], |row| row.get(0))?;
-    rows.collect()
 }
 
 /// Look up an entity ID by exact name or alias.
@@ -499,12 +486,6 @@ pub fn clear_all_data(conn: &Connection) -> SqliteResult<()> {
     conn.execute("PRAGMA foreign_keys = ON", [])?;
 
     Ok(())
-}
-
-pub fn get_entity_ids_for_memory(conn: &Connection, memory_id: i64) -> SqliteResult<Vec<i64>> {
-    let mut stmt = conn.prepare("SELECT entity_id FROM memory_entities WHERE memory_id = ?1")?;
-    let rows = stmt.query_map(params![memory_id], |row| row.get(0))?;
-    rows.collect()
 }
 
 pub fn get_memories_for_entity(conn: &Connection, entity_id: i64) -> SqliteResult<Vec<Memory>> {

@@ -11,16 +11,16 @@ use database::{
     get_memory_by_id, init_db, insert_memory, link_memory_entity, list_memories,
     list_relations, upsert_entity, upsert_relation, update_memory, delete_memory,
     clear_memory_entities, cleanup_database, clear_all_data, add_entity_alias,
-    get_entity_aliases, find_entity_id_by_name_or_alias, merge_entities,
+    find_entity_id_by_name_or_alias, merge_entities,
     DbState, Entity, GraphData, Memory,
 };
 use file_manager::{list_memory_files, read_memory, write_memory, MdRecord};
 use model_client::{call_model_extract, call_model_fusion, call_model_simple};
 use model_config::{ModelConfig, ModelProvider};
 use ollama::{
-    call_ollama_extract_blocking, call_ollama_simple, call_ollama_knowledge_fusion,
+    call_ollama_extract_blocking, call_ollama_simple,
     check_ollama_status, ensure_model_available, ensure_ollama_running,
-    ExtractedData, FusedKnowledge, ENTITY_EXTRACT_PROMPT, KNOWLEDGE_FUSION_PROMPT,
+    ExtractedData, ENTITY_EXTRACT_PROMPT, KNOWLEDGE_FUSION_PROMPT,
 };
 use ollama_installer::download_and_open_ollama_installer;
 use whisper::{setup_whisper as setup_whisper_runtime, transcribe_audio_with_whisper};
@@ -685,7 +685,7 @@ fn update_model_config(
 #[tauri::command]
 fn test_model_config(config: ModelConfig) -> Result<String, String> {
     match &config.provider {
-        ModelProvider::Ollama { base_url, model_name, .. } => {
+        ModelProvider::Ollama { base_url, .. } => {
             let (is_running, msg) = check_ollama_status(base_url);
             if !is_running {
                 return Err(msg);

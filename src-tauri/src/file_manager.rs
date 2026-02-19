@@ -88,35 +88,6 @@ pub fn write_memory(
     Ok(path)
 }
 
-/// Update an existing Markdown file's content and metadata (path unchanged).
-pub fn update_memory_file(
-    path: &Path,
-    content: &str,
-    tags: Option<&[String]>,
-    entities: Option<&[String]>,
-) -> Result<(), String> {
-    let created = if let Ok(rec) = read_memory(path) {
-        rec.frontmatter.created
-    } else {
-        Utc::now().format("%Y-%m-%d %H:%M:%S").to_string()
-    };
-    let tags_str = tags.map(|t| serde_json::to_string(t).unwrap_or_default());
-    let entities_str = entities.map(|e| serde_json::to_string(e).unwrap_or_default());
-
-    let mut front = String::from("---\n");
-    front.push_str(&format!("created: {}\n", created));
-    if let Some(ref t) = tags_str {
-        front.push_str(&format!("tags: {}\n", t));
-    }
-    if let Some(ref e) = entities_str {
-        front.push_str(&format!("entities: {}\n", e));
-    }
-    front.push_str("---\n\n");
-    let full = format!("{}{}", front, content.trim());
-    fs::write(path, full).map_err(|e| e.to_string())?;
-    Ok(())
-}
-
 /// Parse YAML frontmatter using a simple line-by-line parser (no external YAML crate needed).
 fn parse_frontmatter(s: &str) -> Option<MdFrontmatter> {
     let s = s.trim();

@@ -133,8 +133,6 @@ pub const KNOWLEDGE_FUSION_PROMPT: &str = r#"你是一个知识图谱管理专�
 历史记忆：
 "#;
 
-const KNOWLEDGE_FUSION_PROMPT_NEW: &str = "\n\n新记忆：\n";
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExtractedEntity {
     #[serde(rename = "type")]
@@ -434,65 +432,4 @@ pub fn check_ollama_installed() -> bool {
         .stderr(Stdio::null())
         .status()
         .is_ok()
-}
-
-pub fn call_ollama_knowledge_fusion(
-    base_url: &str,
-    model: &str,
-    historical_memories: &[String],
-    new_memory: &str,
-) -> Result<FusedKnowledge, String> {
-    let historical_text = if historical_memories.is_empty() {
-        "(no historical memories)".to_string()
-    } else {
-        historical_memories
-            .iter()
-            .enumerate()
-            .map(|(i, m)| format!("{}. {}", i + 1, m))
-            .collect::<Vec<_>>()
-            .join("\n")
-    };
-
-    let prompt = format!(
-        "{}{}{}{}",
-        KNOWLEDGE_FUSION_PROMPT,
-        historical_text,
-        KNOWLEDGE_FUSION_PROMPT_NEW,
-        new_memory
-    );
-
-    let url = format!("{}/api/generate", base_url.trim_end_matches('/'));
-    let body = serde_json::json!({
-        "model": model,
-        "prompt": prompt,
-        "stream": false,
-        "options": { "temperature": 0.2, "num_predict": 6144 }
-    });
-
-    let client = reqwest::blocking::Client::new();
-    let res = client
-        .post(&url)
-        .json(&body)
-        .send()
-        .map_err(|e| ollama_error_hint(e.to_string()))?;
-
-    if !res.status().is_success() {
-        let status = res.status();
-        let err_body = res.text().unwrap_or_default();
-        return Err(ollama_error_hint(format!("Ollama error {}: {}", status, err_body)));
-    }
-
-    let json: serde_json::Value = res.json().map_err(|e| ollama_error_hint(e.to_string()))?;
-    let response_text = json
-        .get("response")
-        .and_then(|v| v.as_str())
-        .ok_or("missing response field")?;
-
-    let json_str = extract_json_from_response(response_text)
-        .ok_or("could not extract JSON from response")?;
-
-    let data: FusedKnowledge = serde_json::from_str(json_str)
-        .map_err(|e| format!("parse JSON: {}", e))?;
-
-    Ok(data)
 }
