@@ -80,9 +80,28 @@ jobs:
           prerelease: false
           args: ${{ matrix.args }}
 
+  # ── 更新网站版本号并提交 ────────────────────────────────────
+  update-website-version:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update APP_VERSION in website/index.html
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          sed -i "s/const APP_VERSION = '[^']*';/const APP_VERSION = '$TAG';/" website/index.html
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add website/index.html
+          git diff --cached --quiet || git commit -m "chore: bump website version to $TAG"
+          git push
+
   # ── 同步到 Gitee ────────────────────────────────────────────
   sync-gitee:
-    needs: build
+    needs: [build, update-website-version]
     runs-on: ubuntu-latest
     env:
       GITEE_OWNER: daizf00
