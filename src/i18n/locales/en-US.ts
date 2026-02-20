@@ -196,6 +196,39 @@ export default {
       testFailed: 'Test failed: ',
     },
   },
+  saveProgress: {
+    modelInfo: {
+      ollama: '📝 Using Ollama (extract model: {model})',
+      deepseek: '📝 Using DeepSeek API ({model})',
+      openai: '📝 Using OpenAI API ({model})',
+    },
+    step1: {
+      extracting: '🔍 Step 1/4: Extracting entities…',
+      extracted: '✅ Extracted {count} entities',
+    },
+    step2: {
+      lookingUp: '🔍 Step 2/4: Looking up related memories…',
+      found: '✅ Found {count} related memories',
+      noHistory: '✅ No history lookup needed',
+    },
+    step3: {
+      fusing: '🧠 Step 3/4: Running knowledge fusion…',
+      fusionFailed: '⚠️ Knowledge fusion failed, falling back to quick extraction',
+      skipped: '⏭️ Step 3/4: Skipping knowledge fusion (no history)',
+      fusionDone: '✅ Knowledge fusion done: {entities} entities, {relations} relations',
+      extractionDone: '✅ Extraction done: {entities} entities, {relations} relations',
+      noEntities: '⚠️ No entities extracted',
+    },
+    step4: {
+      saving: '💾 Step 4/4: Saving to database…',
+    },
+    done: '🎉 Memory saved successfully!',
+    updateDone: '🎉 Memory updated successfully!',
+    errors: {
+      noEntities: 'No entities detected, memory not saved.\nThis content cannot be structured — if it\'s a question, use the "Q&A" feature.',
+      extractFailed: 'Entity extraction failed, memory not saved.\nIf this is a question, use the "Q&A" feature.\nReason: {reason}',
+    },
+  },
   ollamaSetup: {
     title: 'Ollama One-Click Setup',
     status: {

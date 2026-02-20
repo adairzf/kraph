@@ -25,9 +25,7 @@ function preview(content: string) {
 <template>
   <div class="memory-list">
     <h2 class="panel-title">{{ t('memoryList.title') }}</h2>
-    <p v-if="memoryStore.loading" class="loading">{{ t('memoryList.loading') }}</p>
-    <p v-else-if="memoryStore.error" class="error">{{ memoryStore.error }}</p>
-    <ul v-else class="list">
+    <ul class="list">
       <li
         v-for="m in list"
         :key="m.id"

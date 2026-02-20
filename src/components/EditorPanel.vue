@@ -7,7 +7,18 @@ import { marked } from 'marked'
 import { ElMessageBox, ElMessage } from 'element-plus'
 import { useI18n } from 'vue-i18n'
 
-const { t } = useI18n()
+const { t, te } = useI18n()
+
+// Returns [translatedMessage, isKnownBackendCode]
+function parseBackendError(raw: string): [string, boolean] {
+  try {
+    const parsed = JSON.parse(raw)
+    if (parsed.code && te(parsed.code)) {
+      return [t(parsed.code, parsed), true]
+    }
+  } catch { /* not JSON */ }
+  return [raw, false]
+}
 
 const memoryStore = useMemoryStore()
 const graphStore = useGraphStore()
@@ -34,7 +45,10 @@ async function handleSave() {
     await graphStore.fetchGraph()
     ElMessage.success(t('editorPanel.saveSuccess'))
   } catch (e) {
-    ElMessage.error(t('editorPanel.saveFailed') + (e instanceof Error ? e.message : String(e)))
+    const raw = e instanceof Error ? e.message : String(e)
+    const [msg, isKnown] = parseBackendError(raw)
+    // Known backend errors (entity extraction) are self-contained; others get the "saveFailed" prefix
+    ElMessage.error(isKnown ? msg : t('editorPanel.saveFailed') + msg)
   } finally {
     saving.value = false
   }

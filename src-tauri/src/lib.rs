@@ -111,49 +111,52 @@ fn do_save_memory(
     // Emit current model info
     match &config.provider {
         ModelProvider::Ollama { model_name, extract_model_name, .. } => {
-            emit_save_progress(&app, &format!("📝 Using Ollama (extract model: {})", extract_model_name), "info");
+            emit_save_progress(&app, "saveProgress.modelInfo.ollama", "info", serde_json::json!({ "model": extract_model_name }));
             println!("📝 [save_memory] Using Ollama model: {}", model_name);
         }
         ModelProvider::DeepSeek { model_name, .. } => {
-            emit_save_progress(&app, &format!("📝 Using DeepSeek API ({})", model_name), "info");
+            emit_save_progress(&app, "saveProgress.modelInfo.deepseek", "info", serde_json::json!({ "model": model_name }));
             println!("📝 [save_memory] Using DeepSeek API: {}", model_name);
         }
         ModelProvider::OpenAI { model_name, .. } => {
-            emit_save_progress(&app, &format!("📝 Using OpenAI API ({})", model_name), "info");
+            emit_save_progress(&app, "saveProgress.modelInfo.openai", "info", serde_json::json!({ "model": model_name }));
             println!("📝 [save_memory] Using OpenAI API: {}", model_name);
         }
     }
 
     // Step 1: Quick entity extraction to find related entities for history lookup
-    emit_save_progress(&app, "🔍 Step 1/4: Extracting entities...", "running");
+    emit_save_progress(&app, "saveProgress.step1.extracting", "running", serde_json::json!({}));
     println!("🔍 [Step 1] Starting entity extraction...");
     let quick_extracted: Option<ExtractedData> = if content.trim().len() > 5 {
         if let ModelProvider::Ollama { base_url, extract_model_name, .. } = &config.provider {
             let _ = ensure_ollama_running(base_url);
             let _ = ensure_model_available(base_url, extract_model_name);
         }
-        let extracted = call_model_extract(&config, ENTITY_EXTRACT_PROMPT, &content)
-            .map_err(|e| {
-                emit_save_progress(&app, &format!("❌ Entity extraction failed: {}", e), "error");
-                println!("❌ Extraction failed: {}", e);
-                e
-            })?;
-        Some(extracted)
+        match call_model_extract(&config, ENTITY_EXTRACT_PROMPT, &content) {
+            Ok(extracted) if extracted.entities.is_empty() => {
+                println!("❌ [Step 1] Extraction returned 0 entities, aborting save");
+                return Err(serde_json::json!({ "code": "saveProgress.errors.noEntities" }).to_string());
+            }
+            Ok(extracted) => {
+                emit_save_progress(&app, "saveProgress.step1.extracted", "success", serde_json::json!({ "count": extracted.entities.len() }));
+                println!("✅ Extracted {} entities", extracted.entities.len());
+                Some(extracted)
+            }
+            Err(e) => {
+                println!("❌ [Step 1] Entity extraction failed, aborting save: {}", e);
+                return Err(serde_json::json!({ "code": "saveProgress.errors.extractFailed", "reason": e }).to_string());
+            }
+        }
     } else {
         None
     };
-
-    if let Some(ref ex) = quick_extracted {
-        emit_save_progress(&app, &format!("✅ Extracted {} entities", ex.entities.len()), "success");
-        println!("✅ Extracted {} entities", ex.entities.len());
-    }
 
     let db = app.state::<DbState>();
     let mut guard = db.0.lock().map_err(|e: std::sync::PoisonError<_>| e.to_string())?;
     let conn = guard.as_mut().ok_or("database not initialized")?;
 
     // Step 2: Fetch related historical memories for knowledge fusion
-    emit_save_progress(&app, "🔍 Step 2/4: Looking up related memories...", "running");
+    emit_save_progress(&app, "saveProgress.step2.lookingUp", "running", serde_json::json!({}));
     println!("🔍 [Step 2] Looking up related historical memories...");
     let historical_memories = if let Some(ref ex) = quick_extracted {
         let mut all_memories = Vec::new();
@@ -168,48 +171,48 @@ fn do_save_memory(
                 }
             }
         }
-        emit_save_progress(&app, &format!("✅ Found {} related memories", all_memories.len()), "success");
+        emit_save_progress(&app, "saveProgress.step2.found", "success", serde_json::json!({ "count": all_memories.len() }));
         println!("✅ Found {} related historical memories", all_memories.len());
         all_memories
     } else {
-        emit_save_progress(&app, "✅ No history lookup needed", "success");
+        emit_save_progress(&app, "saveProgress.step2.noHistory", "success", serde_json::json!({}));
         Vec::new()
     };
 
     // Step 3: Knowledge fusion (only when historical memories exist)
     let fused = if !historical_memories.is_empty() && content.trim().len() > 5 {
-        emit_save_progress(&app, "🧠 Step 3/4: Running knowledge fusion...", "running");
+        emit_save_progress(&app, "saveProgress.step3.fusing", "running", serde_json::json!({}));
         println!("🧠 [Step 3] Starting knowledge fusion...");
         if let ModelProvider::Ollama { base_url, model_name, .. } = &config.provider {
             let _ = ensure_model_available(base_url, model_name);
         }
         call_model_fusion(&config, KNOWLEDGE_FUSION_PROMPT, &historical_memories, &content)
             .map_err(|e| {
-                emit_save_progress(&app, "⚠️ Knowledge fusion failed, falling back to quick extraction", "warning");
+                emit_save_progress(&app, "saveProgress.step3.fusionFailed", "warning", serde_json::json!({}));
                 println!("⚠️ Knowledge fusion failed, falling back: {}", e);
                 e
             })
             .ok()
     } else {
-        emit_save_progress(&app, "⏭️ Step 3/4: Skipping knowledge fusion (no history)", "skipped");
+        emit_save_progress(&app, "saveProgress.step3.skipped", "skipped", serde_json::json!({}));
         println!("⏭️ [Step 3] Skipping knowledge fusion (no historical memories)");
         None
     };
 
     let (entities, relations, aliases) = if let Some(fused_data) = fused {
-        emit_save_progress(&app, &format!("✅ Knowledge fusion done: {} entities, {} relations",
-                 fused_data.entities.len(), fused_data.relations.len()), "success");
+        emit_save_progress(&app, "saveProgress.step3.fusionDone", "success",
+            serde_json::json!({ "entities": fused_data.entities.len(), "relations": fused_data.relations.len() }));
         println!("✅ Knowledge fusion complete: {} entities, {} relations, {} aliases",
                  fused_data.entities.len(), fused_data.relations.len(), fused_data.aliases.len());
         (fused_data.entities, fused_data.relations, fused_data.aliases)
     } else if let Some(ex) = quick_extracted {
-        emit_save_progress(&app, &format!("✅ Extraction done: {} entities, {} relations",
-                 ex.entities.len(), ex.relations.len()), "success");
+        emit_save_progress(&app, "saveProgress.step3.extractionDone", "success",
+            serde_json::json!({ "entities": ex.entities.len(), "relations": ex.relations.len() }));
         println!("✅ Using quick extraction results: {} entities, {} relations",
                  ex.entities.len(), ex.relations.len());
         (ex.entities, ex.relations, Vec::new())
     } else {
-        emit_save_progress(&app, "⚠️ No entities extracted", "warning");
+        emit_save_progress(&app, "saveProgress.step3.noEntities", "warning", serde_json::json!({}));
         println!("⚠️ No entities extracted");
         (Vec::new(), Vec::new(), Vec::new())
     };
@@ -217,7 +220,7 @@ fn do_save_memory(
     let entity_names: Vec<String> = entities.iter().map(|x| x.name.clone()).collect();
 
     // Step 4: Persist to database
-    emit_save_progress(&app, "💾 Step 4/4: Saving to database...", "running");
+    emit_save_progress(&app, "saveProgress.step4.saving", "running", serde_json::json!({}));
     println!("💾 [Step 4] Saving to database...");
     let path = write_memory(
         &memories_dir,
@@ -262,7 +265,7 @@ fn do_save_memory(
         }
     }
 
-    emit_save_progress(&app, "✅ Memory saved successfully!", "done");
+    emit_save_progress(&app, "saveProgress.done", "done", serde_json::json!({}));
     println!("✅ Memory saved successfully!");
     get_memory_by_id(conn, memory_id).map_err(|e| e.to_string())
 }
@@ -377,40 +380,49 @@ fn do_update_memory(
     println!("📝 [update_memory ID:{}]", memory_id);
     match &config.provider {
         ModelProvider::Ollama { extract_model_name, .. } => {
-            emit_save_progress(&app, &format!("📝 Updating memory using Ollama (extract: {})", extract_model_name), "info");
+            emit_save_progress(&app, "saveProgress.modelInfo.ollama", "info", serde_json::json!({ "model": extract_model_name }));
         }
         ModelProvider::DeepSeek { model_name, .. } => {
-            emit_save_progress(&app, &format!("📝 Updating memory using DeepSeek ({})", model_name), "info");
+            emit_save_progress(&app, "saveProgress.modelInfo.deepseek", "info", serde_json::json!({ "model": model_name }));
         }
         ModelProvider::OpenAI { model_name, .. } => {
-            emit_save_progress(&app, &format!("📝 Updating memory using OpenAI ({})", model_name), "info");
+            emit_save_progress(&app, "saveProgress.modelInfo.openai", "info", serde_json::json!({ "model": model_name }));
         }
     }
 
     // Step 1: Quick entity extraction
-    emit_save_progress(&app, "🔍 Step 1/4: Extracting entities...", "running");
+    emit_save_progress(&app, "saveProgress.step1.extracting", "running", serde_json::json!({}));
     println!("🔍 Starting entity extraction...");
     let quick_extracted = if content.trim().len() > 5 {
         if let ModelProvider::Ollama { base_url, extract_model_name, .. } = &config.provider {
             let _ = ensure_ollama_running(base_url);
             let _ = ensure_model_available(base_url, extract_model_name);
         }
-        call_model_extract(&config, ENTITY_EXTRACT_PROMPT, &content).ok()
+        match call_model_extract(&config, ENTITY_EXTRACT_PROMPT, &content) {
+            Ok(extracted) if extracted.entities.is_empty() => {
+                println!("❌ [Step 1] Extraction returned 0 entities, aborting update");
+                return Err(serde_json::json!({ "code": "saveProgress.errors.noEntities" }).to_string());
+            }
+            Ok(extracted) => {
+                emit_save_progress(&app, "saveProgress.step1.extracted", "success", serde_json::json!({ "count": extracted.entities.len() }));
+                println!("✅ Extracted {} entities", extracted.entities.len());
+                Some(extracted)
+            }
+            Err(e) => {
+                println!("❌ [Step 1] Entity extraction failed, aborting update: {}", e);
+                return Err(serde_json::json!({ "code": "saveProgress.errors.extractFailed", "reason": e }).to_string());
+            }
+        }
     } else {
         None
     };
-
-    if let Some(ref ex) = quick_extracted {
-        emit_save_progress(&app, &format!("✅ Extracted {} entities", ex.entities.len()), "success");
-        println!("✅ Extracted {} entities", ex.entities.len());
-    }
 
     let db = app.state::<DbState>();
     let mut guard = db.0.lock().map_err(|e: std::sync::PoisonError<_>| e.to_string())?;
     let conn = guard.as_mut().ok_or("database not initialized")?;
 
     // Step 2: Fetch related historical memories for knowledge fusion
-    emit_save_progress(&app, "🔍 Step 2/4: Looking up related memories...", "running");
+    emit_save_progress(&app, "saveProgress.step2.lookingUp", "running", serde_json::json!({}));
     let historical_memories = if let Some(ref ex) = quick_extracted {
         let mut all_memories = Vec::new();
         for entity in &ex.entities {
@@ -424,43 +436,43 @@ fn do_update_memory(
                 }
             }
         }
-        emit_save_progress(&app, &format!("✅ Found {} related memories", all_memories.len()), "success");
+        emit_save_progress(&app, "saveProgress.step2.found", "success", serde_json::json!({ "count": all_memories.len() }));
         all_memories
     } else {
-        emit_save_progress(&app, "✅ No history lookup needed", "success");
+        emit_save_progress(&app, "saveProgress.step2.noHistory", "success", serde_json::json!({}));
         Vec::new()
     };
 
     // Step 3: Knowledge fusion
     let fused = if !historical_memories.is_empty() && content.trim().len() > 5 {
-        emit_save_progress(&app, "🧠 Step 3/4: Running knowledge fusion...", "running");
+        emit_save_progress(&app, "saveProgress.step3.fusing", "running", serde_json::json!({}));
         println!("🧠 Running knowledge fusion...");
         if let ModelProvider::Ollama { base_url, model_name, .. } = &config.provider {
             let _ = ensure_model_available(base_url, model_name);
         }
         call_model_fusion(&config, KNOWLEDGE_FUSION_PROMPT, &historical_memories, &content).ok()
     } else {
-        emit_save_progress(&app, "⏭️ Step 3/4: Skipping knowledge fusion (no history)", "skipped");
+        emit_save_progress(&app, "saveProgress.step3.skipped", "skipped", serde_json::json!({}));
         None
     };
 
     let (entities, relations, aliases) = if let Some(fused_data) = fused {
-        emit_save_progress(&app, &format!("✅ Knowledge fusion done: {} entities, {} relations",
-                 fused_data.entities.len(), fused_data.relations.len()), "success");
+        emit_save_progress(&app, "saveProgress.step3.fusionDone", "success",
+            serde_json::json!({ "entities": fused_data.entities.len(), "relations": fused_data.relations.len() }));
         println!("✅ Knowledge fusion complete");
         (fused_data.entities, fused_data.relations, fused_data.aliases)
     } else if let Some(ex) = quick_extracted {
-        emit_save_progress(&app, &format!("✅ Extraction done: {} entities, {} relations",
-                 ex.entities.len(), ex.relations.len()), "success");
+        emit_save_progress(&app, "saveProgress.step3.extractionDone", "success",
+            serde_json::json!({ "entities": ex.entities.len(), "relations": ex.relations.len() }));
         println!("✅ Using quick extraction results");
         (ex.entities, ex.relations, Vec::new())
     } else {
-        emit_save_progress(&app, "⚠️ No entities extracted", "warning");
+        emit_save_progress(&app, "saveProgress.step3.noEntities", "warning", serde_json::json!({}));
         (Vec::new(), Vec::new(), Vec::new())
     };
 
     // Step 4: Persist to database
-    emit_save_progress(&app, "💾 Step 4/4: Saving to database...", "running");
+    emit_save_progress(&app, "saveProgress.step4.saving", "running", serde_json::json!({}));
 
     update_memory(conn, memory_id, &content, tags_str.as_deref()).map_err(|e| e.to_string())?;
     clear_memory_entities(conn, memory_id).map_err(|e| e.to_string())?;
@@ -513,7 +525,7 @@ fn do_update_memory(
         [],
     ).map_err(|e| e.to_string())?;
 
-    emit_save_progress(&app, "✅ Memory updated successfully!", "done");
+    emit_save_progress(&app, "saveProgress.updateDone", "done", serde_json::json!({}));
     println!("✅ Memory updated successfully!");
     get_memory_by_id(conn, memory_id).map_err(|e| e.to_string())
 }
@@ -713,10 +725,12 @@ fn emit_setup_log(app: &tauri::AppHandle, msg: &str, status: &str) {
 }
 
 /// Helper: emit a memory save progress event to the frontend.
-fn emit_save_progress(app: &tauri::AppHandle, msg: &str, status: &str) {
+/// `code` maps to an i18n key (e.g. "saveProgress.step1.extracting").
+/// `params` carries dynamic values for interpolation (e.g. entity count).
+fn emit_save_progress(app: &tauri::AppHandle, code: &str, status: &str, params: serde_json::Value) {
     let _ = app.emit(
         "memory-save-progress",
-        serde_json::json!({ "message": msg, "status": status }),
+        serde_json::json!({ "code": code, "params": params, "status": status }),
     );
 }
 

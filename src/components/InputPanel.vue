@@ -1,10 +1,24 @@
 <script setup lang="ts">
 import { ref, watch, onMounted } from 'vue'
 import { listen } from '@tauri-apps/api/event'
+import { ElMessage } from 'element-plus'
 import { useMemoryStore } from '../stores/memoryStore'
 import { useGraphStore } from '../stores/graphStore'
 import { setupWhisper, transcribeAudio } from '../utils/tauriApi'
 import { useI18n } from 'vue-i18n'
+
+// Parse a JSON-encoded backend error string into a user-facing message.
+// Rust returns errors as: JSON.stringify({ code: "saveProgress.errors.xxx", reason?: "..." })
+// Falls back to raw string if parsing fails or code is not found in i18n.
+function parseBackendError(raw: string, te: (key: string) => boolean, t: (key: string, params?: Record<string, unknown>) => string): string {
+  try {
+    const parsed = JSON.parse(raw)
+    if (parsed.code && te(parsed.code)) {
+      return t(parsed.code, parsed as Record<string, unknown>)
+    }
+  } catch { /* not JSON, fall through */ }
+  return raw
+}
 
 interface SaveProgressStep {
   message: string
@@ -15,7 +29,7 @@ const emit = defineEmits<{ (e: 'update:modelValue', v: string): void }>()
 const props = defineProps<{ modelValue: string }>()
 const memoryStore = useMemoryStore()
 const graphStore = useGraphStore()
-const { t } = useI18n()
+const { t, te } = useI18n()
 const saving = ref(false)
 const saveProgress = ref<SaveProgressStep[]>([])
 const recording = ref(false)
@@ -254,11 +268,16 @@ async function handleSave() {
   saving.value = true
   saveProgress.value = []
 
-  const unlisten = await listen<{ message: string; status: string }>('memory-save-progress', (event) => {
-    saveProgress.value.push({
-      message: event.payload.message,
-      status: event.payload.status as SaveProgressStep['status'],
-    })
+  const unlisten = await listen<{ code: string; params: Record<string, unknown>; status: string }>('memory-save-progress', (event) => {
+    // Errors are shown via ElMessage in catch; only show other steps in the inline panel
+    if (event.payload.status !== 'error') {
+      const { code, params } = event.payload
+      const message = te(code) ? t(code, params) : code
+      saveProgress.value.push({
+        message,
+        status: event.payload.status as SaveProgressStep['status'],
+      })
+    }
   })
 
   try {
@@ -269,8 +288,11 @@ async function handleSave() {
     // Briefly show the completed progress before fading out
     await new Promise((resolve) => setTimeout(resolve, 2500))
     saveProgress.value = []
-  } catch {
-    // error in store
+  } catch (e) {
+    const raw = e instanceof Error ? e.message : String(e)
+    const msg = parseBackendError(raw, te, t)
+    ElMessage({ type: 'error', message: msg, duration: 6000, showClose: true })
+    saveProgress.value = []
   } finally {
     unlisten()
     saving.value = false

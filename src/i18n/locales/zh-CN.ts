@@ -196,6 +196,39 @@ export default {
       testFailed: '测试失败: ',
     },
   },
+  saveProgress: {
+    modelInfo: {
+      ollama: '📝 使用 Ollama（提取模型: {model}）',
+      deepseek: '📝 使用 DeepSeek API（{model}）',
+      openai: '📝 使用 OpenAI API（{model}）',
+    },
+    step1: {
+      extracting: '🔍 第 1/4 步：提取实体…',
+      extracted: '✅ 提取到 {count} 个实体',
+    },
+    step2: {
+      lookingUp: '🔍 第 2/4 步：查找关联记忆…',
+      found: '✅ 找到 {count} 条相关记忆',
+      noHistory: '✅ 无需查找历史记忆',
+    },
+    step3: {
+      fusing: '🧠 第 3/4 步：知识融合推理…',
+      fusionFailed: '⚠️ 知识融合失败，回退到快速提取结果',
+      skipped: '⏭️ 第 3/4 步：跳过知识融合（无历史记忆）',
+      fusionDone: '✅ 知识融合完成：{entities} 个实体，{relations} 条关系',
+      extractionDone: '✅ 提取完成：{entities} 个实体，{relations} 条关系',
+      noEntities: '⚠️ 未提取到任何实体',
+    },
+    step4: {
+      saving: '💾 第 4/4 步：写入数据库…',
+    },
+    done: '🎉 记忆保存成功！',
+    updateDone: '🎉 记忆更新成功！',
+    errors: {
+      noEntities: '未检测到任何实体，记忆未保存。\n此内容无法结构化存储，如果是问句请使用「问答」功能查询。',
+      extractFailed: '实体提取失败，记忆未保存。\n如果输入的是问句，请使用「问答」功能查询。\n原因: {reason}',
+    },
+  },
   ollamaSetup: {
     title: 'Ollama 一键初始化',
     status: {
