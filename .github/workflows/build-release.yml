@@ -75,8 +75,14 @@ jobs:
             | macOS Intel | `*_x64.dmg` |
             | Windows | `*_x64-setup.exe` 或/or `*_x64_en-US.msi` |
 
-            > ⚠️ macOS 首次打开提示"无法验证"：系统设置 → 隐私与安全 → 仍要打开
-            > ⚠️ macOS first launch "unverified developer": System Settings → Privacy & Security → Open Anyway
+            > ⚠️ **macOS 提示"已损坏，无法打开"**：打开终端，运行以下命令后重试：
+            > ```
+            > xattr -cr /Applications/Kraph.app
+            > ```
+            > ⚠️ **macOS "damaged and can't be opened"**: Open Terminal and run the command above, then retry.
+            >
+            > ⚠️ macOS 提示"无法验证"：系统设置 → 隐私与安全 → 仍要打开
+            > ⚠️ macOS "unverified developer": System Settings → Privacy & Security → Open Anyway
             > ⚠️ Windows SmartScreen 警告：更多信息 → 仍要运行
             > ⚠️ Windows SmartScreen warning: More info → Run anyway
           releaseDraft: false
