@@ -9,8 +9,145 @@ export interface ExtractedData {
   relations: { from: string; to: string; relation: string }[]
 }
 
+export interface MemoryLibraryInfo {
+  id: string
+  name: string
+  path: string
+  is_current: boolean
+}
+
+export interface StoryGenerationRequest {
+  key_events: string[]
+  genre?: string
+  style?: string
+  protagonist?: string
+  chapter_count?: number
+  constraints?: string
+  language?: string
+}
+
+export interface StoryChapterPlan {
+  chapter: number
+  title: string
+  goal: string
+  conflict: string
+  twist: string
+  hook: string
+}
+
+export interface StoryGenerationResult {
+  title: string
+  premise: string
+  outline: string[]
+  chapter_plan: StoryChapterPlan[]
+  first_chapter: string
+  continuity_checks: string[]
+}
+
+export interface StoryWrittenChapter {
+  chapter: number
+  title: string
+  content: string
+  summary?: string
+}
+
+export interface StoryContinuationRequest {
+  title: string
+  premise: string
+  outline: string[]
+  chapter_plan: StoryChapterPlan[]
+  continuity_checks: string[]
+  written_chapters: StoryWrittenChapter[]
+  target_chapter?: number
+  style?: string
+  constraints?: string
+  language?: string
+}
+
+export interface StoryContinuationResult {
+  chapter: number
+  title: string
+  content: string
+  summary: string
+}
+
+export interface StoryProjectSaveRequest {
+  project_id?: string
+  title: string
+  premise: string
+  outline: string[]
+  chapter_plan: StoryChapterPlan[]
+  continuity_checks: string[]
+  written_chapters: StoryWrittenChapter[]
+  style?: string
+  constraints?: string
+  language?: string
+}
+
+export interface StoryProjectSummary {
+  id: string
+  title: string
+  updated_at: string
+}
+
+export interface StoryProjectData {
+  project_id: string
+  title: string
+  premise: string
+  outline: string[]
+  chapter_plan: StoryChapterPlan[]
+  continuity_checks: string[]
+  written_chapters: StoryWrittenChapter[]
+  style?: string
+  constraints?: string
+  language?: string
+  created_at: string
+  updated_at: string
+}
+
+export interface StoryRewriteChapterRequest {
+  title: string
+  premise: string
+  outline: string[]
+  chapter_plan: StoryChapterPlan[]
+  continuity_checks: string[]
+  written_chapters: StoryWrittenChapter[]
+  target_chapter: number
+  feedback?: string
+  style?: string
+  constraints?: string
+  language?: string
+}
+
 export async function listMemoriesDir(): Promise<string[]> {
   return invoke('list_memories_dir')
+}
+
+export async function listMemoryLibraries(): Promise<MemoryLibraryInfo[]> {
+  return invoke('list_memory_libraries')
+}
+
+export async function getCurrentMemoryLibrary(): Promise<MemoryLibraryInfo> {
+  return invoke('get_current_memory_library')
+}
+
+export async function createMemoryLibrary(name: string): Promise<MemoryLibraryInfo> {
+  return invoke('create_memory_library', { name })
+}
+
+export async function switchMemoryLibrary(libraryId: string): Promise<MemoryLibraryInfo> {
+  return invoke('switch_memory_library', { libraryId })
+}
+
+export async function renameMemoryLibrary(
+  libraryId: string,
+  name: string
+): Promise<MemoryLibraryInfo> {
+  return invoke('rename_memory_library', { libraryId, name })
+}
+
+export async function deleteMemoryLibrary(libraryId: string): Promise<string> {
+  return invoke('delete_memory_library', { libraryId })
 }
 
 export async function openMemoriesFolder(): Promise<string> {
@@ -103,6 +240,38 @@ export async function setupWhisper(): Promise<string> {
 
 export async function answerQuestion(question: string): Promise<string> {
   return invoke('answer_question', { question })
+}
+
+export async function generateStoryFromEvents(
+  request: StoryGenerationRequest
+): Promise<StoryGenerationResult> {
+  return invoke('generate_story_from_events', { request })
+}
+
+export async function continueStoryChapter(
+  request: StoryContinuationRequest
+): Promise<StoryContinuationResult> {
+  return invoke('continue_story_chapter', { request })
+}
+
+export async function rewriteStoryChapter(
+  request: StoryRewriteChapterRequest
+): Promise<StoryContinuationResult> {
+  return invoke('rewrite_story_chapter', { request })
+}
+
+export async function saveStoryProject(
+  request: StoryProjectSaveRequest
+): Promise<StoryProjectSummary> {
+  return invoke('save_story_project', { request })
+}
+
+export async function listStoryProjects(): Promise<StoryProjectSummary[]> {
+  return invoke('list_story_projects')
+}
+
+export async function loadStoryProject(projectId: string): Promise<StoryProjectData> {
+  return invoke('load_story_project', { projectId })
 }
 
 /** Download and open the Ollama installer (Win/Mac: download package; Linux: open download page). */

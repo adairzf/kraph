@@ -1,17 +1,31 @@
 <script setup lang="ts">
-import { ref, watch, onMounted, onUnmounted } from 'vue'
+import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
 import MemoryList from './components/MemoryList.vue'
 import InputPanel from './components/InputPanel.vue'
 import EditorPanel from './components/EditorPanel.vue'
 import GraphPanel from './components/GraphPanel.vue'
 import CharacterCard from './components/CharacterCard.vue'
 import SearchPanel from './components/SearchPanel.vue'
+import StoryGeneratorPanel from './components/StoryGeneratorPanel.vue'
 import ModelSettings from './components/ModelSettings.vue'
 import ModelIndicator from './components/ModelIndicator.vue'
 import OllamaSetupDialog from './components/OllamaSetupDialog.vue'
 import { useGraphStore } from './stores/graphStore'
+import { useMemoryStore } from './stores/memoryStore'
 import { useOllamaStore } from './stores/ollamaStore'
-import { checkOllama, getModelConfig, openMemoriesFolder, clearAllData } from './utils/tauriApi'
+import {
+  checkOllama,
+  getModelConfig,
+  openMemoriesFolder,
+  clearAllData,
+  createMemoryLibrary,
+  deleteMemoryLibrary,
+  getCurrentMemoryLibrary,
+  listMemoryLibraries,
+  renameMemoryLibrary,
+  switchMemoryLibrary,
+  type MemoryLibraryInfo,
+} from './utils/tauriApi'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useI18n } from 'vue-i18n'
 
@@ -24,12 +38,20 @@ function toggleLocale() {
 }
 
 const editorContent = ref('')
-const rightView = ref<'entity' | 'qa' | 'edit' | 'settings'>('entity')
+const rightView = ref<'entity' | 'qa' | 'story' | 'edit' | 'settings'>('entity')
 const graphStore = useGraphStore()
+const memoryStore = useMemoryStore()
 const ollamaStore = useOllamaStore()
 const searchName = ref('')
 const leftSidebarCollapsed = ref(false)
 const menuOpen = ref(false)
+const mainRef = ref<HTMLElement | null>(null)
+const rightSidebarWidth = ref(300)
+const rightResizing = ref(false)
+
+const RIGHT_SIDEBAR_MIN = 280
+const RIGHT_SIDEBAR_MAX = 760
+const CENTER_MIN_WIDTH = 320
 
 // Ollama status
 const ollamaChecking = ref(true)
@@ -38,15 +60,33 @@ const isOllamaProvider = ref(false)
 
 // Ref to the setup dialog component
 const setupDialogRef = ref<InstanceType<typeof OllamaSetupDialog> | null>(null)
+const libraries = ref<MemoryLibraryInfo[]>([])
+const currentLibraryId = ref('')
+const switchingLibrary = ref(false)
+const creatingLibrary = ref(false)
+const renamingLibrary = ref(false)
+const deletingLibrary = ref(false)
+
+const currentLibrary = computed(() =>
+  libraries.value.find((x) => x.id === currentLibraryId.value) ?? null,
+)
+const canDeleteLibrary = computed(() => libraries.value.length > 1 && !!currentLibrary.value)
+
+async function refreshModelStatus() {
+  const config = await getModelConfig()
+  isOllamaProvider.value = config.provider.type === 'ollama'
+  if (isOllamaProvider.value) {
+    const [running] = await checkOllama()
+    ollamaRunning.value = running
+  } else {
+    ollamaRunning.value = false
+  }
+}
 
 onMounted(async () => {
   try {
-    const config = await getModelConfig()
-    isOllamaProvider.value = config.provider.type === 'ollama'
-    if (isOllamaProvider.value) {
-      const [running] = await checkOllama()
-      ollamaRunning.value = running
-    }
+    await refreshLibraries()
+    await refreshModelStatus()
   } catch {
     // Ignore startup check errors silently
   } finally {
@@ -54,9 +94,15 @@ onMounted(async () => {
   }
 
   document.addEventListener('click', handleOutsideClick)
+
+  const savedWidth = Number(localStorage.getItem('right-sidebar-width') || '')
+  if (!Number.isNaN(savedWidth) && savedWidth >= RIGHT_SIDEBAR_MIN) {
+    rightSidebarWidth.value = Math.min(savedWidth, RIGHT_SIDEBAR_MAX)
+  }
 })
 
 onUnmounted(() => {
+  stopResizeRight()
   document.removeEventListener('click', handleOutsideClick)
 })
 
@@ -65,6 +111,45 @@ function handleOutsideClick(e: MouseEvent) {
   if (!target.closest('.menu-wrapper')) {
     menuOpen.value = false
   }
+}
+
+function clampRightSidebarWidth(width: number): number {
+  const base = Math.max(RIGHT_SIDEBAR_MIN, Math.min(width, RIGHT_SIDEBAR_MAX))
+  const rect = mainRef.value?.getBoundingClientRect()
+  if (!rect) return base
+  const maxFromCenter = Math.max(RIGHT_SIDEBAR_MIN, rect.width - CENTER_MIN_WIDTH)
+  return Math.min(base, maxFromCenter)
+}
+
+function onResizeRightMove(e: MouseEvent) {
+  if (!rightResizing.value || !mainRef.value) return
+  const rect = mainRef.value.getBoundingClientRect()
+  const nextWidth = rect.right - e.clientX
+  rightSidebarWidth.value = Math.round(clampRightSidebarWidth(nextWidth))
+}
+
+function stopResizeRight() {
+  if (!rightResizing.value) return
+  rightResizing.value = false
+  window.removeEventListener('mousemove', onResizeRightMove)
+  window.removeEventListener('mouseup', stopResizeRight)
+  document.body.style.cursor = ''
+  document.body.style.userSelect = ''
+  localStorage.setItem('right-sidebar-width', String(rightSidebarWidth.value))
+}
+
+function startResizeRight(e: MouseEvent) {
+  e.preventDefault()
+  rightResizing.value = true
+  document.body.style.cursor = 'col-resize'
+  document.body.style.userSelect = 'none'
+  window.addEventListener('mousemove', onResizeRightMove)
+  window.addEventListener('mouseup', stopResizeRight)
+}
+
+function resetResizeRight() {
+  rightSidebarWidth.value = 300
+  localStorage.setItem('right-sidebar-width', '300')
 }
 
 // Listen for setup requests emitted by child components (e.g. SearchPanel)
@@ -84,6 +169,135 @@ function openSetupDialog() {
 
 function onSearchEntity() {
   graphStore.setSearchEntity(searchName.value.trim() || null)
+}
+
+async function refreshWorkspaceData() {
+  await Promise.all([memoryStore.fetchMemories(), graphStore.fetchGraph()])
+  memoryStore.setCurrentMemory(null)
+  graphStore.setSearchEntity(null)
+}
+
+async function refreshLibraries() {
+  const [list, current] = await Promise.all([
+    listMemoryLibraries(),
+    getCurrentMemoryLibrary(),
+  ])
+  libraries.value = list
+  currentLibraryId.value = current.id
+}
+
+async function onSwitchLibrary() {
+  const target = currentLibraryId.value
+  if (!target || switchingLibrary.value) return
+  switchingLibrary.value = true
+  try {
+    await switchMemoryLibrary(target)
+    await refreshLibraries()
+    await refreshModelStatus()
+    await refreshWorkspaceData()
+    ElMessage.success(t('app.library.switched'))
+  } catch (e) {
+    ElMessage.error(t('app.library.switchFailed') + (e instanceof Error ? e.message : String(e)))
+    await refreshLibraries()
+  } finally {
+    switchingLibrary.value = false
+  }
+}
+
+async function onCreateLibrary() {
+  if (creatingLibrary.value) return
+  creatingLibrary.value = true
+  try {
+    const promptResult = await ElMessageBox.prompt(
+      t('app.library.createPrompt'),
+      t('app.library.createTitle'),
+      {
+        confirmButtonText: t('app.library.createConfirm'),
+        cancelButtonText: t('app.library.createCancel'),
+        inputValidator: (input: string) => {
+          if (!input || !input.trim()) {
+            return t('app.library.emptyName')
+          }
+          return true
+        },
+      },
+    )
+
+    const libraryName = String((promptResult as { value?: string })?.value || '').trim()
+    if (!libraryName) {
+      return
+    }
+    const created = await createMemoryLibrary(libraryName)
+    currentLibraryId.value = created.id
+    await onSwitchLibrary()
+  } catch (e) {
+    if (e !== 'cancel') {
+      ElMessage.error(t('app.library.createFailed') + (e instanceof Error ? e.message : String(e)))
+    }
+  } finally {
+    creatingLibrary.value = false
+  }
+}
+
+async function onRenameLibrary() {
+  if (!currentLibrary.value || renamingLibrary.value) return
+  renamingLibrary.value = true
+  try {
+    const promptResult = await ElMessageBox.prompt(
+      t('app.library.renamePrompt'),
+      t('app.library.renameTitle'),
+      {
+        confirmButtonText: t('app.library.renameConfirm'),
+        cancelButtonText: t('app.library.renameCancel'),
+        inputValue: currentLibrary.value.name,
+        inputValidator: (input: string) => {
+          if (!input || !input.trim()) {
+            return t('app.library.emptyName')
+          }
+          return true
+        },
+      },
+    )
+    const newName = String((promptResult as { value?: string })?.value || '').trim()
+    if (!newName) return
+
+    await renameMemoryLibrary(currentLibrary.value.id, newName)
+    await refreshLibraries()
+    ElMessage.success(t('app.library.renamed'))
+  } catch (e) {
+    if (e !== 'cancel') {
+      ElMessage.error(t('app.library.renameFailed') + (e instanceof Error ? e.message : String(e)))
+    }
+  } finally {
+    renamingLibrary.value = false
+  }
+}
+
+async function onDeleteLibrary() {
+  if (!currentLibrary.value || deletingLibrary.value || !canDeleteLibrary.value) return
+  deletingLibrary.value = true
+  try {
+    await ElMessageBox.confirm(
+      t('app.library.deleteConfirm.message', { name: currentLibrary.value.name }),
+      t('app.library.deleteConfirm.title'),
+      {
+        confirmButtonText: t('app.library.deleteConfirm.confirm'),
+        cancelButtonText: t('app.library.deleteConfirm.cancel'),
+        type: 'warning',
+      },
+    )
+    await deleteMemoryLibrary(currentLibrary.value.id)
+    await refreshLibraries()
+    await refreshModelStatus()
+    await refreshWorkspaceData()
+    ElMessage.success(t('app.library.deleted'))
+  } catch (e) {
+    if (e !== 'cancel') {
+      ElMessage.error(t('app.library.deleteFailed') + (e instanceof Error ? e.message : String(e)))
+    }
+  } finally {
+    deletingLibrary.value = false
+  }
 }
 
 async function onOpenMemoriesFolder() {
@@ -139,6 +353,54 @@ async function onClearAllData() {
           </svg>
         </button>
         <h1 class="title">{{ t('app.title') }}</h1>
+        <div class="library-switch" :title="t('app.library.label')">
+          <span class="library-badge">{{ t('app.library.label') }}</span>
+          <el-select
+            v-model="currentLibraryId"
+            class="library-el-select"
+            size="small"
+            :disabled="switchingLibrary || !libraries.length"
+            @change="onSwitchLibrary"
+          >
+            <el-option
+              v-for="lib in libraries"
+              :key="lib.id"
+              :value="lib.id"
+              :label="lib.name"
+            >
+              <span>{{ lib.name }}</span>
+            </el-option>
+          </el-select>
+          <div class="library-actions">
+            <button
+              type="button"
+              class="btn-library-action"
+              :disabled="creatingLibrary"
+              :title="t('app.library.createTitle')"
+              @click="onCreateLibrary"
+            >
+              {{ t('app.library.createShort') }}
+            </button>
+            <button
+              type="button"
+              class="btn-library-action"
+              :disabled="renamingLibrary || !currentLibrary"
+              :title="t('app.library.renameTitle')"
+              @click="onRenameLibrary"
+            >
+              {{ t('app.library.renameShort') }}
+            </button>
+            <button
+              type="button"
+              class="btn-library-action danger"
+              :disabled="deletingLibrary || !canDeleteLibrary"
+              :title="t('app.library.deleteTitle')"
+              @click="onDeleteLibrary"
+            >
+              {{ t('app.library.deleteShort') }}
+            </button>
+          </div>
+        </div>
       </div>
       <div class="header-actions">
         <ModelIndicator />
@@ -191,7 +453,7 @@ async function onClearAllData() {
       <OllamaSetupDialog ref="setupDialogRef" />
     </header>
 
-    <div class="main">
+    <div ref="mainRef" class="main" :class="{ resizing: rightResizing }">
       <!-- ─── LEFT: Memory list + input ─── -->
       <aside class="sidebar-left" :class="{ collapsed: leftSidebarCollapsed }">
         <div class="sidebar-left-inner">
@@ -226,8 +488,18 @@ async function onClearAllData() {
         </div>
       </section>
 
+      <div
+        class="right-resizer"
+        :title="t('app.layout.resizeRightHint')"
+        @mousedown="startResizeRight"
+        @dblclick="resetResizeRight"
+      />
+
       <!-- ─── RIGHT: Entity card + functional panel ─── -->
-      <aside class="sidebar-right">
+      <aside
+        class="sidebar-right"
+        :style="{ width: `${rightSidebarWidth}px`, flexBasis: `${rightSidebarWidth}px` }"
+      >
         <!-- Tabs -->
         <div class="right-tabs">
           <button class="rtab" :class="{ active: rightView === 'entity' }" @click="rightView = 'entity'">
@@ -235,6 +507,9 @@ async function onClearAllData() {
           </button>
           <button class="rtab" :class="{ active: rightView === 'qa' }" @click="rightView = 'qa'">
             {{ t('app.tabs.qa') }}
+          </button>
+          <button class="rtab" :class="{ active: rightView === 'story' }" @click="rightView = 'story'">
+            {{ t('app.tabs.story') }}
           </button>
           <button class="rtab" :class="{ active: rightView === 'edit' }" @click="rightView = 'edit'">
             {{ t('app.tabs.edit') }}
@@ -251,6 +526,7 @@ async function onClearAllData() {
             :entity-name="graphStore.searchEntityName"
           />
           <SearchPanel v-show="rightView === 'qa'" />
+          <StoryGeneratorPanel v-show="rightView === 'story'" :key="`story-${currentLibraryId}`" />
           <EditorPanel v-show="rightView === 'edit'" />
           <ModelSettings v-show="rightView === 'settings'" />
         </div>
@@ -396,6 +672,7 @@ html.dark .el-overlay { background: rgba(0,0,0,0.6) !important; }
   display: flex;
   align-items: center;
   gap: 10px;
+  min-width: 0;
 }
 .sidebar-toggle {
   width: 28px;
@@ -425,6 +702,93 @@ html.dark .el-overlay { background: rgba(0,0,0,0.6) !important; }
   -webkit-text-fill-color: transparent;
   background-clip: text;
   letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+.library-switch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: 520px;
+  height: 32px;
+  padding: 0 8px;
+  border-radius: 8px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.015));
+  border: 1px solid var(--border);
+}
+.library-badge {
+  flex-shrink: 0;
+  font-size: 10px;
+  color: var(--text-dim);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.library-el-select {
+  flex: 1;
+  min-width: 120px;
+  max-width: 240px;
+}
+.library-el-select :deep(.el-select__wrapper) {
+  min-height: 26px;
+  background: var(--bg3) !important;
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.1) inset !important;
+  border-radius: 6px;
+}
+.library-el-select :deep(.el-select__selected-item),
+.library-el-select :deep(.el-select__placeholder) {
+  font-size: 12px;
+}
+.library-el-select.is-disabled {
+  opacity: 0.5;
+}
+.library-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.btn-library-action {
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--text-muted);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 24px;
+  white-space: nowrap;
+  transition: all 0.15s;
+}
+.btn-library-action:hover {
+  background: var(--bg4);
+  color: var(--text);
+  border-color: var(--border-hover);
+}
+.btn-library-action.danger {
+  color: #fca5a5;
+}
+.btn-library-action.danger:hover {
+  background: rgba(248, 113, 113, 0.1);
+  border-color: rgba(248, 113, 113, 0.3);
+  color: #fecaca;
+}
+.btn-library-action:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+@media (max-width: 1220px) {
+  .library-switch {
+    max-width: 360px;
+    padding: 0 6px;
+    gap: 6px;
+  }
+  .library-badge { display: none; }
+  .library-el-select { max-width: 150px; }
+  .btn-library-action {
+    padding: 0 6px;
+    font-size: 10px;
+  }
 }
 .header-actions {
   display: flex;
@@ -541,6 +905,9 @@ html.dark .el-overlay { background: rgba(0,0,0,0.6) !important; }
   display: flex;
   min-height: 0;
 }
+.main.resizing {
+  cursor: col-resize;
+}
 
 /* ─── LEFT SIDEBAR: memory list + input ─── */
 .sidebar-left {
@@ -626,6 +993,22 @@ html.dark .el-overlay { background: rgba(0,0,0,0.6) !important; }
   flex: 1;
   min-height: 0;
   overflow: hidden;
+}
+
+.right-resizer {
+  width: 6px;
+  flex: 0 0 6px;
+  cursor: col-resize;
+  background: transparent;
+  border-left: 1px solid transparent;
+  border-right: 1px solid transparent;
+  transition: background 0.15s, border-color 0.15s;
+}
+.right-resizer:hover,
+.main.resizing .right-resizer {
+  background: rgba(124, 92, 252, 0.12);
+  border-left-color: rgba(124, 92, 252, 0.28);
+  border-right-color: rgba(124, 92, 252, 0.28);
 }
 
 /* ─── RIGHT SIDEBAR: entity + panels ─── */

@@ -25,21 +25,416 @@ use ollama::{
 use ollama_installer::download_and_open_ollama_installer;
 use whisper::{setup_whisper as setup_whisper_runtime, transcribe_audio_with_whisper};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tauri::{Emitter, Manager, State};
+use serde::{Deserialize, Serialize};
+use chrono::Utc;
 
-pub struct AppDataDir(pub PathBuf);
+pub struct AppRootDir(pub PathBuf);
+pub struct AppDataDir(pub Mutex<PathBuf>);
+pub struct CurrentLibraryId(pub Mutex<String>);
 pub struct ModelConfigState(pub Mutex<ModelConfig>);
+
+#[derive(Debug, Clone, Deserialize)]
+struct StoryGenerationRequest {
+    key_events: Vec<String>,
+    #[serde(default)]
+    genre: Option<String>,
+    #[serde(default)]
+    style: Option<String>,
+    #[serde(default)]
+    protagonist: Option<String>,
+    #[serde(default)]
+    chapter_count: Option<usize>,
+    #[serde(default)]
+    constraints: Option<String>,
+    #[serde(default)]
+    language: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct StoryChapterPlan {
+    chapter: usize,
+    title: String,
+    goal: String,
+    conflict: String,
+    twist: String,
+    hook: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct StoryGenerationResult {
+    title: String,
+    premise: String,
+    outline: Vec<String>,
+    chapter_plan: Vec<StoryChapterPlan>,
+    first_chapter: String,
+    continuity_checks: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+struct StoryPromptContext {
+    memories: Vec<String>,
+    entities: Vec<String>,
+    relations: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct MemoryLibraryInfo {
+    id: String,
+    name: String,
+    path: String,
+    is_current: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct LibraryMeta {
+    name: String,
+    created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct StoryWrittenChapter {
+    chapter: usize,
+    title: String,
+    content: String,
+    #[serde(default)]
+    summary: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct StoryContinuationRequest {
+    title: String,
+    premise: String,
+    #[serde(default)]
+    outline: Vec<String>,
+    #[serde(default)]
+    chapter_plan: Vec<StoryChapterPlan>,
+    #[serde(default)]
+    continuity_checks: Vec<String>,
+    #[serde(default)]
+    written_chapters: Vec<StoryWrittenChapter>,
+    #[serde(default)]
+    target_chapter: Option<usize>,
+    #[serde(default)]
+    style: Option<String>,
+    #[serde(default)]
+    constraints: Option<String>,
+    #[serde(default)]
+    language: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct StoryContinuationResult {
+    chapter: usize,
+    title: String,
+    content: String,
+    summary: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct StoryProjectSaveRequest {
+    #[serde(default)]
+    project_id: Option<String>,
+    title: String,
+    premise: String,
+    #[serde(default)]
+    outline: Vec<String>,
+    #[serde(default)]
+    chapter_plan: Vec<StoryChapterPlan>,
+    #[serde(default)]
+    continuity_checks: Vec<String>,
+    #[serde(default)]
+    written_chapters: Vec<StoryWrittenChapter>,
+    #[serde(default)]
+    style: Option<String>,
+    #[serde(default)]
+    constraints: Option<String>,
+    #[serde(default)]
+    language: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct StoryProjectSummary {
+    id: String,
+    title: String,
+    updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct StoryProjectData {
+    project_id: String,
+    title: String,
+    premise: String,
+    outline: Vec<String>,
+    chapter_plan: Vec<StoryChapterPlan>,
+    continuity_checks: Vec<String>,
+    written_chapters: Vec<StoryWrittenChapter>,
+    #[serde(default)]
+    style: Option<String>,
+    #[serde(default)]
+    constraints: Option<String>,
+    #[serde(default)]
+    language: Option<String>,
+    created_at: String,
+    updated_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct StoryRewriteChapterRequest {
+    title: String,
+    premise: String,
+    #[serde(default)]
+    outline: Vec<String>,
+    #[serde(default)]
+    chapter_plan: Vec<StoryChapterPlan>,
+    #[serde(default)]
+    continuity_checks: Vec<String>,
+    #[serde(default)]
+    written_chapters: Vec<StoryWrittenChapter>,
+    target_chapter: usize,
+    #[serde(default)]
+    feedback: Option<String>,
+    #[serde(default)]
+    style: Option<String>,
+    #[serde(default)]
+    constraints: Option<String>,
+    #[serde(default)]
+    language: Option<String>,
+}
 
 #[tauri::command]
 fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
 }
 
+fn get_current_data_dir(data_dir: &State<AppDataDir>) -> Result<PathBuf, String> {
+    data_dir
+        .0
+        .lock()
+        .map(|p| p.clone())
+        .map_err(|e| e.to_string())
+}
+
+fn get_current_library_id(current_library: &State<CurrentLibraryId>) -> Result<String, String> {
+    current_library
+        .0
+        .lock()
+        .map(|id| id.clone())
+        .map_err(|e| e.to_string())
+}
+
+fn libraries_root(app_root: &Path) -> PathBuf {
+    app_root.join("libraries")
+}
+
+fn current_library_file(app_root: &Path) -> PathBuf {
+    app_root.join("current_library.txt")
+}
+
+fn library_meta_path(library_dir: &Path) -> PathBuf {
+    library_dir.join("library.json")
+}
+
+fn library_model_config_path(library_dir: &Path) -> PathBuf {
+    library_dir.join("model_config.json")
+}
+
+fn story_projects_root(data_dir: &Path) -> PathBuf {
+    data_dir.join("novels")
+}
+
+fn story_project_file_path(data_dir: &Path, project_id: &str) -> PathBuf {
+    story_projects_root(data_dir).join(format!("{project_id}.json"))
+}
+
+fn normalize_library_id(name: &str) -> String {
+    let mut id = String::new();
+    let mut last_dash = false;
+    for ch in name.trim().chars() {
+        if ch.is_ascii_alphanumeric() {
+            id.push(ch.to_ascii_lowercase());
+            last_dash = false;
+        } else if !last_dash && !id.is_empty() {
+            id.push('-');
+            last_dash = true;
+        }
+    }
+    while id.ends_with('-') {
+        id.pop();
+    }
+    if id.is_empty() {
+        format!("library-{}", Utc::now().format("%Y%m%d%H%M%S"))
+    } else {
+        id
+    }
+}
+
+fn unique_library_id(root: &Path, base_id: &str) -> String {
+    if !root.join(base_id).exists() {
+        return base_id.to_string();
+    }
+    for i in 2..10000 {
+        let candidate = format!("{base_id}-{i}");
+        if !root.join(&candidate).exists() {
+            return candidate;
+        }
+    }
+    format!("{base_id}-{}", Utc::now().format("%Y%m%d%H%M%S"))
+}
+
+fn normalize_story_project_id(name: &str) -> String {
+    let id = normalize_library_id(name);
+    if id.is_empty() || id.starts_with("library-") {
+        format!("story-{}", Utc::now().format("%Y%m%d%H%M%S"))
+    } else {
+        id
+    }
+}
+
+fn unique_story_project_id(root: &Path, base_id: &str) -> String {
+    let path = root.join(format!("{base_id}.json"));
+    if !path.exists() {
+        return base_id.to_string();
+    }
+    for i in 2..10000 {
+        let candidate = format!("{base_id}-{i}");
+        if !root.join(format!("{candidate}.json")).exists() {
+            return candidate;
+        }
+    }
+    format!("{base_id}-{}", Utc::now().format("%Y%m%d%H%M%S"))
+}
+
+fn ensure_library_structure(library_dir: &Path) -> Result<(), String> {
+    fs::create_dir_all(library_dir).map_err(|e| format!("Failed to create library directory: {e}"))?;
+    fs::create_dir_all(library_dir.join("database")).map_err(|e| format!("Failed to create database directory: {e}"))?;
+    fs::create_dir_all(library_dir.join("memories")).map_err(|e| format!("Failed to create memories directory: {e}"))?;
+    Ok(())
+}
+
+fn move_path_if_exists(from: &Path, to: &Path) -> Result<(), String> {
+    if !from.exists() || to.exists() {
+        return Ok(());
+    }
+    if let Some(parent) = to.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("Failed to create parent directory: {e}"))?;
+    }
+    fs::rename(from, to).map_err(|e| format!("Failed to move {:?} to {:?}: {}", from, to, e))
+}
+
+fn load_library_name(library_dir: &Path, fallback: &str) -> String {
+    let meta_path = library_meta_path(library_dir);
+    if let Ok(content) = fs::read_to_string(meta_path) {
+        if let Ok(meta) = serde_json::from_str::<LibraryMeta>(&content) {
+            if !meta.name.trim().is_empty() {
+                return meta.name.trim().to_string();
+            }
+        }
+    }
+    fallback.to_string()
+}
+
+fn save_library_meta(library_dir: &Path, name: &str) -> Result<(), String> {
+    let meta = LibraryMeta {
+        name: name.trim().to_string(),
+        created_at: Utc::now().to_rfc3339(),
+    };
+    let content = serde_json::to_string_pretty(&meta).map_err(|e| e.to_string())?;
+    fs::write(library_meta_path(library_dir), content).map_err(|e| format!("Failed to save library metadata: {e}"))?;
+    Ok(())
+}
+
+fn read_saved_current_library_id(app_root: &Path) -> Option<String> {
+    let path = current_library_file(app_root);
+    let content = fs::read_to_string(path).ok()?;
+    let trimmed = content.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+fn persist_current_library_id(app_root: &Path, library_id: &str) -> Result<(), String> {
+    fs::write(current_library_file(app_root), library_id).map_err(|e| format!("Failed to persist current library: {e}"))
+}
+
+fn build_library_info(library_dir: &Path, library_id: &str, current_id: &str) -> MemoryLibraryInfo {
+    MemoryLibraryInfo {
+        id: library_id.to_string(),
+        name: load_library_name(library_dir, library_id),
+        path: library_dir.to_string_lossy().to_string(),
+        is_current: library_id == current_id,
+    }
+}
+
+fn list_library_infos(app_root: &Path, current_id: &str) -> Result<Vec<MemoryLibraryInfo>, String> {
+    let root = libraries_root(app_root);
+    fs::create_dir_all(&root).map_err(|e| format!("Failed to create libraries root: {e}"))?;
+
+    let mut libraries = Vec::new();
+    for entry in fs::read_dir(&root).map_err(|e| format!("Failed to read libraries root: {e}"))? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let id = entry.file_name().to_string_lossy().to_string();
+        libraries.push(build_library_info(&path, &id, current_id));
+    }
+    libraries.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    Ok(libraries)
+}
+
+fn switch_to_library_internal(
+    library_id: String,
+    app_root: &Path,
+    db: &State<DbState>,
+    data_dir: &State<AppDataDir>,
+    current_library: &State<CurrentLibraryId>,
+    config_state: &State<ModelConfigState>,
+) -> Result<MemoryLibraryInfo, String> {
+    let libraries_root = libraries_root(app_root);
+    let library_dir = libraries_root.join(&library_id);
+    if !library_dir.exists() || !library_dir.is_dir() {
+        return Err(format!("Library '{}' does not exist.", library_id));
+    }
+    ensure_library_structure(&library_dir)?;
+
+    let db_path = library_dir.join("database").join("kraph.db");
+    let conn = init_db(&db_path).map_err(|e| e.to_string())?;
+
+    {
+        let mut db_guard = (&**db).0.lock().map_err(|e: std::sync::PoisonError<_>| e.to_string())?;
+        *db_guard = Some(conn);
+    }
+    {
+        let mut path_guard = data_dir.0.lock().map_err(|e| e.to_string())?;
+        *path_guard = library_dir.clone();
+    }
+    {
+        let mut id_guard = current_library.0.lock().map_err(|e| e.to_string())?;
+        *id_guard = library_id.clone();
+    }
+    persist_current_library_id(app_root, &library_id)?;
+
+    // Load model config from the active library, defaulting when absent.
+    let config_path = library_model_config_path(&library_dir);
+    let model_config = ModelConfig::load_from_file(&config_path).unwrap_or_default();
+    {
+        let mut guard = config_state.0.lock().map_err(|e| e.to_string())?;
+        *guard = model_config;
+    }
+
+    Ok(build_library_info(&library_dir, &library_id, &library_id))
+}
+
 #[tauri::command]
 fn list_memories_dir(data_dir: State<AppDataDir>) -> Result<Vec<String>, String> {
-    let memories_dir = data_dir.0.join("memories");
+    let data_dir = get_current_data_dir(&data_dir)?;
+    let memories_dir = data_dir.join("memories");
     let paths = list_memory_files(&memories_dir)?;
     Ok(paths
         .into_iter()
@@ -48,8 +443,263 @@ fn list_memories_dir(data_dir: State<AppDataDir>) -> Result<Vec<String>, String>
 }
 
 #[tauri::command]
+fn list_memory_libraries(
+    app_root: State<AppRootDir>,
+    current_library: State<CurrentLibraryId>,
+) -> Result<Vec<MemoryLibraryInfo>, String> {
+    let current_id = get_current_library_id(&current_library)?;
+    list_library_infos(&app_root.0, &current_id)
+}
+
+#[tauri::command]
+fn get_current_memory_library(
+    app_root: State<AppRootDir>,
+    current_library: State<CurrentLibraryId>,
+) -> Result<MemoryLibraryInfo, String> {
+    let current_id = get_current_library_id(&current_library)?;
+    let library_dir = libraries_root(&app_root.0).join(&current_id);
+    if !library_dir.exists() {
+        return Err("Current library not found".to_string());
+    }
+    Ok(build_library_info(&library_dir, &current_id, &current_id))
+}
+
+#[tauri::command]
+fn create_memory_library(
+    name: String,
+    app_root: State<AppRootDir>,
+    current_library: State<CurrentLibraryId>,
+    config_state: State<ModelConfigState>,
+) -> Result<MemoryLibraryInfo, String> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err("Library name cannot be empty.".to_string());
+    }
+
+    let root = libraries_root(&app_root.0);
+    fs::create_dir_all(&root).map_err(|e| format!("Failed to create libraries root: {e}"))?;
+
+    let base_id = normalize_library_id(trimmed);
+    let library_id = unique_library_id(&root, &base_id);
+    let library_dir = root.join(&library_id);
+    ensure_library_structure(&library_dir)?;
+    save_library_meta(&library_dir, trimmed)?;
+
+    // Initialize with current model config so the new library is ready immediately.
+    let current_config = config_state.0.lock().map_err(|e| e.to_string())?.clone();
+    current_config.save_to_file(&library_model_config_path(&library_dir))?;
+
+    let current_id = get_current_library_id(&current_library)?;
+    Ok(build_library_info(&library_dir, &library_id, &current_id))
+}
+
+#[tauri::command]
+fn switch_memory_library(
+    library_id: String,
+    app_root: State<AppRootDir>,
+    db: State<DbState>,
+    data_dir: State<AppDataDir>,
+    current_library: State<CurrentLibraryId>,
+    config_state: State<ModelConfigState>,
+) -> Result<MemoryLibraryInfo, String> {
+    let library_id = library_id.trim();
+    if library_id.is_empty() {
+        return Err("Library id cannot be empty.".to_string());
+    }
+    switch_to_library_internal(
+        library_id.to_string(),
+        &app_root.0,
+        &db,
+        &data_dir,
+        &current_library,
+        &config_state,
+    )
+}
+
+#[tauri::command]
+fn rename_memory_library(
+    library_id: String,
+    name: String,
+    app_root: State<AppRootDir>,
+    current_library: State<CurrentLibraryId>,
+) -> Result<MemoryLibraryInfo, String> {
+    let library_id = library_id.trim();
+    let name = name.trim();
+    if library_id.is_empty() {
+        return Err("Library id cannot be empty.".to_string());
+    }
+    if name.is_empty() {
+        return Err("Library name cannot be empty.".to_string());
+    }
+
+    let dir = libraries_root(&app_root.0).join(library_id);
+    if !dir.exists() || !dir.is_dir() {
+        return Err(format!("Library '{}' does not exist.", library_id));
+    }
+    save_library_meta(&dir, name)?;
+
+    let current_id = get_current_library_id(&current_library)?;
+    Ok(build_library_info(&dir, library_id, &current_id))
+}
+
+#[tauri::command]
+fn delete_memory_library(
+    library_id: String,
+    app_root: State<AppRootDir>,
+    db: State<DbState>,
+    data_dir: State<AppDataDir>,
+    current_library: State<CurrentLibraryId>,
+    config_state: State<ModelConfigState>,
+) -> Result<String, String> {
+    let library_id = library_id.trim().to_string();
+    if library_id.is_empty() {
+        return Err("Library id cannot be empty.".to_string());
+    }
+
+    let root = libraries_root(&app_root.0);
+    let target_dir = root.join(&library_id);
+    if !target_dir.exists() || !target_dir.is_dir() {
+        return Err(format!("Library '{}' does not exist.", library_id));
+    }
+
+    let current_id = get_current_library_id(&current_library)?;
+    let libraries = list_library_infos(&app_root.0, &current_id)?;
+    if libraries.len() <= 1 {
+        return Err("Cannot delete the last remaining library.".to_string());
+    }
+
+    if library_id == current_id {
+        let fallback = libraries
+            .iter()
+            .find(|x| x.id != library_id)
+            .ok_or("No fallback library available.")?;
+
+        switch_to_library_internal(
+            fallback.id.clone(),
+            &app_root.0,
+            &db,
+            &data_dir,
+            &current_library,
+            &config_state,
+        )?;
+    }
+
+    fs::remove_dir_all(&target_dir).map_err(|e| format!("Failed to delete library: {e}"))?;
+    Ok(library_id)
+}
+
+#[tauri::command]
+fn save_story_project(
+    request: StoryProjectSaveRequest,
+    data_dir: State<AppDataDir>,
+) -> Result<StoryProjectSummary, String> {
+    let data_dir = get_current_data_dir(&data_dir)?;
+    let root = story_projects_root(&data_dir);
+    fs::create_dir_all(&root).map_err(|e| format!("Failed to create novels directory: {e}"))?;
+
+    let title = request.title.trim();
+    if title.is_empty() {
+        return Err("Story title cannot be empty.".to_string());
+    }
+
+    let mut project_id = request
+        .project_id
+        .as_ref()
+        .map(|x| x.trim())
+        .filter(|x| !x.is_empty())
+        .map(normalize_story_project_id)
+        .unwrap_or_else(|| normalize_story_project_id(title));
+
+    if request.project_id.as_deref().unwrap_or("").trim().is_empty() {
+        project_id = unique_story_project_id(&root, &project_id);
+    }
+
+    let path = story_project_file_path(&data_dir, &project_id);
+    let now = Utc::now().to_rfc3339();
+    let created_at = if path.exists() {
+        fs::read_to_string(&path)
+            .ok()
+            .and_then(|s| serde_json::from_str::<StoryProjectData>(&s).ok())
+            .map(|p| p.created_at)
+            .unwrap_or_else(|| now.clone())
+    } else {
+        now.clone()
+    };
+
+    let payload = StoryProjectData {
+        project_id: project_id.clone(),
+        title: title.to_string(),
+        premise: request.premise.trim().to_string(),
+        outline: request.outline,
+        chapter_plan: request.chapter_plan,
+        continuity_checks: request.continuity_checks,
+        written_chapters: request.written_chapters,
+        style: request.style.map(|x| x.trim().to_string()).filter(|x| !x.is_empty()),
+        constraints: request.constraints.map(|x| x.trim().to_string()).filter(|x| !x.is_empty()),
+        language: request.language.map(|x| x.trim().to_string()).filter(|x| !x.is_empty()),
+        created_at,
+        updated_at: now.clone(),
+    };
+
+    let content = serde_json::to_string_pretty(&payload).map_err(|e| e.to_string())?;
+    fs::write(&path, content).map_err(|e| format!("Failed to save story project: {e}"))?;
+
+    Ok(StoryProjectSummary {
+        id: project_id,
+        title: payload.title,
+        updated_at: now,
+    })
+}
+
+#[tauri::command]
+fn list_story_projects(data_dir: State<AppDataDir>) -> Result<Vec<StoryProjectSummary>, String> {
+    let data_dir = get_current_data_dir(&data_dir)?;
+    let root = story_projects_root(&data_dir);
+    fs::create_dir_all(&root).map_err(|e| format!("Failed to create novels directory: {e}"))?;
+
+    let mut items = Vec::new();
+    for entry in fs::read_dir(&root).map_err(|e| format!("Failed to read novels directory: {e}"))? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        if path.extension().and_then(|x| x.to_str()) != Some("json") {
+            continue;
+        }
+        if let Ok(content) = fs::read_to_string(&path) {
+            if let Ok(project) = serde_json::from_str::<StoryProjectData>(&content) {
+                items.push(StoryProjectSummary {
+                    id: project.project_id,
+                    title: project.title,
+                    updated_at: project.updated_at,
+                });
+            }
+        }
+    }
+
+    items.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    Ok(items)
+}
+
+#[tauri::command]
+fn load_story_project(project_id: String, data_dir: State<AppDataDir>) -> Result<StoryProjectData, String> {
+    let project_id = project_id.trim();
+    if project_id.is_empty() {
+        return Err("Project id cannot be empty.".to_string());
+    }
+    let data_dir = get_current_data_dir(&data_dir)?;
+    let path = story_project_file_path(&data_dir, project_id);
+    let content = fs::read_to_string(&path).map_err(|e| format!("Failed to read story project: {e}"))?;
+    let project = serde_json::from_str::<StoryProjectData>(&content)
+        .map_err(|e| format!("Failed to parse story project: {e}"))?;
+    Ok(project)
+}
+
+#[tauri::command]
 fn open_memories_folder(data_dir: State<AppDataDir>) -> Result<String, String> {
-    let memories_dir = data_dir.0.join("memories");
+    let data_dir = get_current_data_dir(&data_dir)?;
+    let memories_dir = data_dir.join("memories");
     fs::create_dir_all(&memories_dir).map_err(|e| format!("Failed to create memories directory: {e}"))?;
 
     #[cfg(target_os = "macos")]
@@ -79,7 +729,8 @@ fn open_memories_folder(data_dir: State<AppDataDir>) -> Result<String, String> {
 
 #[tauri::command]
 fn get_memories_folder_path(data_dir: State<AppDataDir>) -> Result<String, String> {
-    let memories_dir = data_dir.0.join("memories");
+    let data_dir = get_current_data_dir(&data_dir)?;
+    let memories_dir = data_dir.join("memories");
     fs::create_dir_all(&memories_dir).map_err(|e| format!("Failed to create memories directory: {e}"))?;
     Ok(memories_dir.to_string_lossy().to_string())
 }
@@ -279,7 +930,7 @@ async fn save_memory(
     data_dir: State<'_, AppDataDir>,
 ) -> Result<Memory, String> {
     let config = config_state.0.lock().map_err(|e| e.to_string())?.clone();
-    let memories_dir = data_dir.0.join("memories");
+    let memories_dir = get_current_data_dir(&data_dir)?.join("memories");
     tokio::task::spawn_blocking(move || {
         do_save_memory(app, content, tags, config, memories_dir)
     })
@@ -572,7 +1223,7 @@ fn clear_all_data_cmd(db: State<DbState>, data_dir: State<AppDataDir>) -> Result
     clear_all_data(conn).map_err(|e| e.to_string())?;
 
     // Remove and recreate the memories folder
-    let memories_dir = data_dir.0.join("memories");
+    let memories_dir = get_current_data_dir(&data_dir)?.join("memories");
     if memories_dir.exists() {
         std::fs::remove_dir_all(&memories_dir).map_err(|e| format!("Failed to delete memories folder: {}", e))?;
         std::fs::create_dir_all(&memories_dir).map_err(|e| format!("Failed to recreate memories folder: {}", e))?;
@@ -583,14 +1234,14 @@ fn clear_all_data_cmd(db: State<DbState>, data_dir: State<AppDataDir>) -> Result
 
 /// Transcribe audio: calls the local whisper.cpp (whisper-cli).
 #[tauri::command]
-fn transcribe_audio(audio_base64: String, data_dir: State<AppDataDir>) -> Result<String, String> {
-    transcribe_audio_with_whisper(&audio_base64, &data_dir.0)
+fn transcribe_audio(audio_base64: String, app_root: State<AppRootDir>) -> Result<String, String> {
+    transcribe_audio_with_whisper(&audio_base64, &app_root.0)
 }
 
 /// Set up Whisper: auto-installs whisper-cpp (macOS) and downloads the base model.
 #[tauri::command]
-fn setup_whisper(data_dir: State<AppDataDir>) -> Result<String, String> {
-    setup_whisper_runtime(&data_dir.0)
+fn setup_whisper(app_root: State<AppRootDir>) -> Result<String, String> {
+    setup_whisper_runtime(&app_root.0)
 }
 
 const OLLAMA_URL: &str = "http://localhost:11434";
@@ -664,6 +1315,786 @@ fn answer_question(question: String, db: State<DbState>) -> Result<String, Strin
     call_ollama_simple(OLLAMA_URL, OLLAMA_MODEL, &prompt)
 }
 
+fn truncate_for_prompt(input: &str, max_chars: usize) -> String {
+    if input.chars().count() <= max_chars {
+        return input.to_string();
+    }
+    let mut out: String = input.chars().take(max_chars).collect();
+    out.push('…');
+    out
+}
+
+fn extract_json_block(response: &str) -> Option<&str> {
+    let s = response.trim();
+    let s = s
+        .strip_prefix("```json")
+        .or_else(|| s.strip_prefix("```"))
+        .unwrap_or(s);
+    let s = s.trim_end().strip_suffix("```").unwrap_or(s);
+    Some(s.trim())
+}
+
+fn read_optional_string(value: &serde_json::Value, keys: &[&str]) -> Option<String> {
+    for key in keys {
+        if let Some(v) = value.get(key).and_then(|v| v.as_str()) {
+            let trimmed = v.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
+            }
+        }
+    }
+    None
+}
+
+fn read_string_array(value: &serde_json::Value, keys: &[&str]) -> Vec<String> {
+    for key in keys {
+        if let Some(arr) = value.get(key).and_then(|v| v.as_array()) {
+            let mut out = Vec::new();
+            for item in arr {
+                if let Some(s) = item.as_str() {
+                    let s = s.trim();
+                    if !s.is_empty() {
+                        out.push(s.to_string());
+                    }
+                    continue;
+                }
+                if let Some(obj) = item.as_object() {
+                    for candidate in ["summary", "text", "content", "plot"] {
+                        if let Some(s) = obj.get(candidate).and_then(|v| v.as_str()) {
+                            let s = s.trim();
+                            if !s.is_empty() {
+                                out.push(s.to_string());
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            if !out.is_empty() {
+                return out;
+            }
+        }
+    }
+    Vec::new()
+}
+
+fn parse_story_generation_response(response: &str) -> Result<StoryGenerationResult, String> {
+    let json_str = extract_json_block(response).ok_or("Could not extract JSON output from model response")?;
+    let value: serde_json::Value = serde_json::from_str(json_str)
+        .map_err(|e| format!("Failed to parse story JSON: {e}"))?;
+
+    let title = read_optional_string(&value, &["title"]).unwrap_or_default();
+    let premise = read_optional_string(&value, &["premise", "summary", "logline"]).unwrap_or_default();
+    let outline = read_string_array(&value, &["outline", "story_outline"]);
+    let continuity_checks = read_string_array(&value, &["continuity_checks", "checks"]);
+    let first_chapter = read_optional_string(&value, &["first_chapter", "chapter1", "opening"])
+        .unwrap_or_default();
+
+    let chapter_items = value
+        .get("chapter_plan")
+        .or_else(|| value.get("chapters"))
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    let chapter_plan = chapter_items
+        .into_iter()
+        .enumerate()
+        .map(|(idx, item)| {
+            let chapter = item
+                .get("chapter")
+                .and_then(|v| v.as_u64())
+                .map(|n| n as usize)
+                .unwrap_or(idx + 1);
+
+            StoryChapterPlan {
+                chapter,
+                title: read_optional_string(&item, &["title"]).unwrap_or_default(),
+                goal: read_optional_string(&item, &["goal", "objective"]).unwrap_or_default(),
+                conflict: read_optional_string(&item, &["conflict"]).unwrap_or_default(),
+                twist: read_optional_string(&item, &["twist", "turn"]).unwrap_or_default(),
+                hook: read_optional_string(&item, &["hook", "ending_hook"]).unwrap_or_default(),
+            }
+        })
+        .collect();
+
+    Ok(StoryGenerationResult {
+        title,
+        premise,
+        outline,
+        chapter_plan,
+        first_chapter,
+        continuity_checks,
+    })
+}
+
+fn collect_story_prompt_context(db: &State<DbState>) -> Result<StoryPromptContext, String> {
+    let mut guard = (&**db).0.lock().map_err(|e: std::sync::PoisonError<_>| e.to_string())?;
+    let conn = guard.as_mut().ok_or("database not initialized")?;
+
+    let memories = list_memories(conn)
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .take(12)
+        .map(|m| format!("[{}] {}", m.created_at, truncate_for_prompt(m.content.trim(), 150)))
+        .collect::<Vec<_>>();
+
+    let graph = get_graph_data(conn).map_err(|e| e.to_string())?;
+    let id_to_name: std::collections::HashMap<String, String> = graph
+        .nodes
+        .iter()
+        .map(|n| (n.id.clone(), n.name.clone()))
+        .collect();
+
+    let entities = graph
+        .nodes
+        .iter()
+        .take(40)
+        .map(|n| format!("{}（{}）", n.name, n.node_type))
+        .collect::<Vec<_>>();
+
+    let relations = graph
+        .links
+        .iter()
+        .take(50)
+        .filter_map(|l| {
+            let source = id_to_name.get(&l.source)?;
+            let target = id_to_name.get(&l.target)?;
+            Some(format!("{source} -[{}]-> {target}", l.relation))
+        })
+        .collect::<Vec<_>>();
+
+    Ok(StoryPromptContext {
+        memories,
+        entities,
+        relations,
+    })
+}
+
+fn clamp_chapter_count(chapter_count: Option<usize>) -> usize {
+    chapter_count.unwrap_or(10).clamp(3, 24)
+}
+
+fn infer_key_events_from_context(context: &StoryPromptContext, chapter_count: usize) -> Vec<String> {
+    let target_len = chapter_count.clamp(3, 12);
+    let mut inferred = Vec::new();
+
+    for line in context.relations.iter().take(target_len / 2 + 1) {
+        inferred.push(format!("关系线索：{}", truncate_for_prompt(line, 80)));
+    }
+
+    for memory in context.memories.iter().take(target_len + 2) {
+        let cleaned = memory
+            .splitn(2, ']')
+            .nth(1)
+            .map(|s| s.trim())
+            .unwrap_or(memory.as_str());
+        let candidate = truncate_for_prompt(cleaned, 100);
+        if !candidate.is_empty() {
+            inferred.push(format!("记忆事件：{}", candidate));
+        }
+    }
+
+    inferred.sort();
+    inferred.dedup();
+    inferred.truncate(target_len);
+    inferred
+}
+
+fn build_story_prompt(request: &StoryGenerationRequest, context: &StoryPromptContext) -> String {
+    let is_zh = request
+        .language
+        .as_deref()
+        .map(|lang| lang.starts_with("zh"))
+        .unwrap_or(true);
+
+    let target_language = if is_zh { "中文" } else { "English" };
+    let default_genre = if is_zh { "不限（可自动判断）" } else { "Unspecified (infer from events)" };
+    let default_style = if is_zh { "叙事清晰、人物驱动" } else { "Clear narrative, character-driven" };
+    let default_protagonist = if is_zh { "未指定" } else { "Not specified" };
+    let default_constraints = if is_zh { "无" } else { "None" };
+
+    let key_events = request
+        .key_events
+        .iter()
+        .enumerate()
+        .map(|(idx, event)| format!("{}. {}", idx + 1, event))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let memory_context = if context.memories.is_empty() {
+        if is_zh { "（暂无历史记忆）".to_string() } else { "(No historical memories)".to_string() }
+    } else {
+        context.memories.join("\n")
+    };
+
+    let entity_context = if context.entities.is_empty() {
+        if is_zh { "（暂无实体）".to_string() } else { "(No entities)".to_string() }
+    } else {
+        context.entities.join("、")
+    };
+
+    let relation_context = if context.relations.is_empty() {
+        if is_zh { "（暂无关系）".to_string() } else { "(No relations)".to_string() }
+    } else {
+        context.relations.join("\n")
+    };
+
+    format!(
+r#"你是一位专业小说策划与写作助手。请根据用户给出的关键事件，补全为可直接开写的故事方案。
+
+硬性要求：
+1. 必须保留并覆盖所有关键事件，不可删除或篡改核心事实。
+2. 可以补充过渡情节，但所有新增内容必须服务主线。
+3. 人物动机和关系要前后一致，冲突升级要合理。
+4. 输出语言必须是：{target_language}
+5. 只输出 JSON，不要输出 Markdown、解释或多余文本。
+
+输出 JSON 结构（字段名必须一致）：
+{{
+  "title": "小说标题",
+  "premise": "一句话故事核心",
+  "outline": ["三幕/多幕剧情要点1", "剧情要点2"],
+  "chapter_plan": [
+    {{
+      "chapter": 1,
+      "title": "章节标题",
+      "goal": "本章目标",
+      "conflict": "核心冲突",
+      "twist": "转折",
+      "hook": "章末钩子"
+    }}
+  ],
+  "first_chapter": "第一章正文（可直接阅读，建议 1200-1800 字）",
+  "continuity_checks": ["关键一致性检查点1", "检查点2"]
+}}
+
+生成参数：
+- 目标章节数：{chapter_count}
+- 类型：{genre}
+- 文风：{style}
+- 主角：{protagonist}
+- 额外约束：{constraints}
+
+关键事件（必须全部覆盖）：
+{key_events}
+
+已有图谱实体（可复用）：
+{entity_context}
+
+已有实体关系（可复用）：
+{relation_context}
+
+历史记忆摘要（可参考）：
+{memory_context}
+"#,
+        target_language = target_language,
+        chapter_count = clamp_chapter_count(request.chapter_count),
+        genre = request.genre.clone().unwrap_or_else(|| default_genre.to_string()),
+        style = request.style.clone().unwrap_or_else(|| default_style.to_string()),
+        protagonist = request
+            .protagonist
+            .clone()
+            .unwrap_or_else(|| default_protagonist.to_string()),
+        constraints = request
+            .constraints
+            .clone()
+            .unwrap_or_else(|| default_constraints.to_string()),
+        key_events = key_events,
+        entity_context = entity_context,
+        relation_context = relation_context,
+        memory_context = memory_context,
+    )
+}
+
+fn build_story_continue_prompt(request: &StoryContinuationRequest, target_chapter: usize) -> String {
+    let is_zh = request
+        .language
+        .as_deref()
+        .map(|lang| lang.starts_with("zh"))
+        .unwrap_or(true);
+
+    let target_language = if is_zh { "中文" } else { "English" };
+    let style = request
+        .style
+        .clone()
+        .unwrap_or_else(|| if is_zh { "保持与前文一致" } else { "Keep style consistent with previous chapters" }.to_string());
+    let constraints = request
+        .constraints
+        .clone()
+        .unwrap_or_else(|| if is_zh { "无" } else { "None" }.to_string());
+
+    let outline_text = if request.outline.is_empty() {
+        if is_zh { "（未提供）".to_string() } else { "(Not provided)".to_string() }
+    } else {
+        request
+            .outline
+            .iter()
+            .enumerate()
+            .map(|(i, item)| format!("{}. {}", i + 1, item))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
+    let plan_text = if request.chapter_plan.is_empty() {
+        if is_zh { "（未提供章节计划）".to_string() } else { "(No chapter plan provided)".to_string() }
+    } else {
+        request
+            .chapter_plan
+            .iter()
+            .map(|c| {
+                format!(
+                    "第{}章《{}》\n- 目标：{}\n- 冲突：{}\n- 转折：{}\n- 钩子：{}",
+                    c.chapter, c.title, c.goal, c.conflict, c.twist, c.hook
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    };
+
+    let checks_text = if request.continuity_checks.is_empty() {
+        if is_zh { "（无）".to_string() } else { "(None)".to_string() }
+    } else {
+        request.continuity_checks.join("\n")
+    };
+
+    let written_text = if request.written_chapters.is_empty() {
+        if is_zh { "（尚无正文）".to_string() } else { "(No written chapters yet)".to_string() }
+    } else {
+        request
+            .written_chapters
+            .iter()
+            .map(|c| {
+                format!(
+                    "第{}章《{}》\n{}\n",
+                    c.chapter,
+                    if c.title.trim().is_empty() { if is_zh { "未命名" } else { "Untitled" } } else { c.title.as_str() },
+                    truncate_for_prompt(&c.content, 2600)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n---\n")
+    };
+
+    format!(
+r#"你是长篇小说续写助手。请基于现有设定与已写内容，续写下一章。
+
+硬性要求：
+1. 不能推翻已写章节事实。
+2. 必须延续人物动机、关系和语气。
+3. 如有章节计划，优先遵循目标章节的计划项。
+4. 输出语言必须是：{target_language}
+5. 只输出 JSON，不要输出解释或 Markdown。
+
+输出 JSON 格式：
+{{
+  "chapter": {target_chapter},
+  "title": "本章标题",
+  "content": "本章正文（建议 1200-2200 字）",
+  "summary": "本章摘要（80-150 字）"
+}}
+
+故事标题：{story_title}
+核心 premise：{premise}
+文风要求：{style}
+额外约束：{constraints}
+
+总纲：
+{outline_text}
+
+章节计划：
+{plan_text}
+
+一致性检查点：
+{checks_text}
+
+已写章节：
+{written_text}
+
+请生成第 {target_chapter} 章。
+"#,
+        target_language = target_language,
+        target_chapter = target_chapter,
+        story_title = request.title,
+        premise = request.premise,
+        style = style,
+        constraints = constraints,
+        outline_text = outline_text,
+        plan_text = plan_text,
+        checks_text = checks_text,
+        written_text = written_text,
+    )
+}
+
+fn build_story_rewrite_prompt(
+    request: &StoryRewriteChapterRequest,
+    target: &StoryWrittenChapter,
+) -> String {
+    let is_zh = request
+        .language
+        .as_deref()
+        .map(|lang| lang.starts_with("zh"))
+        .unwrap_or(true);
+
+    let target_language = if is_zh { "中文" } else { "English" };
+    let style = request
+        .style
+        .clone()
+        .unwrap_or_else(|| if is_zh { "保持全书一致风格" } else { "Keep style consistent across the story" }.to_string());
+    let constraints = request
+        .constraints
+        .clone()
+        .unwrap_or_else(|| if is_zh { "无" } else { "None" }.to_string());
+    let feedback = request
+        .feedback
+        .as_ref()
+        .map(|x| x.trim())
+        .filter(|x| !x.is_empty())
+        .unwrap_or(if is_zh { "在不改变主线事实的前提下，优化节奏、冲突和表达。" } else { "Improve pacing, conflict, and writing quality without changing core facts." });
+
+    let outline_text = if request.outline.is_empty() {
+        if is_zh { "（未提供）".to_string() } else { "(Not provided)".to_string() }
+    } else {
+        request
+            .outline
+            .iter()
+            .enumerate()
+            .map(|(i, item)| format!("{}. {}", i + 1, item))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
+    let plan_text = if request.chapter_plan.is_empty() {
+        if is_zh { "（未提供章节计划）".to_string() } else { "(No chapter plan provided)".to_string() }
+    } else {
+        request
+            .chapter_plan
+            .iter()
+            .map(|c| {
+                format!(
+                    "第{}章《{}》\n- 目标：{}\n- 冲突：{}\n- 转折：{}\n- 钩子：{}",
+                    c.chapter, c.title, c.goal, c.conflict, c.twist, c.hook
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    };
+
+    let checks_text = if request.continuity_checks.is_empty() {
+        if is_zh { "（无）".to_string() } else { "(None)".to_string() }
+    } else {
+        request.continuity_checks.join("\n")
+    };
+
+    let context_chapters = request
+        .written_chapters
+        .iter()
+        .map(|c| {
+            format!(
+                "第{}章《{}》\n{}",
+                c.chapter,
+                c.title,
+                truncate_for_prompt(&c.content, if c.chapter == target.chapter { 3200 } else { 1200 })
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n---\n\n");
+
+    format!(
+r#"你是小说编辑助手。请根据修改意见，重写指定章节。
+
+硬性要求：
+1. 只能重写目标章节，不要改动其他章节事实。
+2. 必须保持全书人物关系、时间线和设定一致。
+3. 必须严格响应“修改意见”。
+4. 输出语言必须是：{target_language}
+5. 只输出 JSON。
+
+输出 JSON：
+{{
+  "chapter": {target_chapter},
+  "title": "章节标题",
+  "content": "重写后的完整章节正文",
+  "summary": "章节摘要（80-150字）"
+}}
+
+故事标题：{story_title}
+核心 premise：{premise}
+风格要求：{style}
+额外约束：{constraints}
+
+总纲：
+{outline_text}
+
+章节计划：
+{plan_text}
+
+一致性检查点：
+{checks_text}
+
+全书已写章节（用于保持一致）：
+{context_chapters}
+
+目标章节：第 {target_chapter} 章《{target_title}》
+原章节文本：
+{target_content}
+
+修改意见：
+{feedback}
+"#,
+        target_language = target_language,
+        target_chapter = target.chapter,
+        story_title = request.title,
+        premise = request.premise,
+        style = style,
+        constraints = constraints,
+        outline_text = outline_text,
+        plan_text = plan_text,
+        checks_text = checks_text,
+        context_chapters = context_chapters,
+        target_title = target.title,
+        target_content = truncate_for_prompt(&target.content, 5000),
+        feedback = feedback,
+    )
+}
+
+fn parse_story_continuation_response(response: &str, target_chapter: usize) -> Result<StoryContinuationResult, String> {
+    let json_str = extract_json_block(response).ok_or("Could not extract JSON output from model response")?;
+    let value: serde_json::Value = serde_json::from_str(json_str)
+        .map_err(|e| format!("Failed to parse continuation JSON: {e}"))?;
+
+    let chapter = value
+        .get("chapter")
+        .and_then(|v| v.as_u64())
+        .map(|x| x as usize)
+        .unwrap_or(target_chapter);
+
+    Ok(StoryContinuationResult {
+        chapter,
+        title: read_optional_string(&value, &["title"]).unwrap_or_default(),
+        content: read_optional_string(&value, &["content", "chapter_text", "text"]).unwrap_or_default(),
+        summary: read_optional_string(&value, &["summary", "chapter_summary"]).unwrap_or_default(),
+    })
+}
+
+#[tauri::command]
+fn generate_story_from_events(
+    mut request: StoryGenerationRequest,
+    db: State<DbState>,
+    config_state: State<ModelConfigState>,
+) -> Result<StoryGenerationResult, String> {
+    let is_zh = request
+        .language
+        .as_deref()
+        .map(|lang| lang.starts_with("zh"))
+        .unwrap_or(true);
+
+    request.key_events = request
+        .key_events
+        .into_iter()
+        .map(|x| x.trim().to_string())
+        .filter(|x| !x.is_empty())
+        .collect();
+
+    let config = config_state.0.lock().map_err(|e| e.to_string())?.clone();
+
+    if let ModelProvider::Ollama { base_url, model_name, .. } = &config.provider {
+        ensure_ollama_running(base_url)?;
+        ensure_model_available(base_url, model_name)?;
+    }
+
+    let context = collect_story_prompt_context(&db)?;
+    if request.key_events.is_empty() {
+        request.key_events = infer_key_events_from_context(&context, clamp_chapter_count(request.chapter_count));
+    }
+    if request.key_events.is_empty() {
+        return Err(if is_zh {
+            "图谱中暂无足够事件，请至少输入一个关键事件或先保存一些人物/事件记忆。".to_string()
+        } else {
+            "No usable events were found in the graph. Please add at least one key event or save some memories first.".to_string()
+        });
+    }
+
+    let prompt = build_story_prompt(&request, &context);
+    let response = call_model_simple(&config, &prompt)?;
+
+    match parse_story_generation_response(&response) {
+        Ok(mut parsed) => {
+            if parsed.title.trim().is_empty() {
+                parsed.title = if is_zh {
+                    "未命名故事".to_string()
+                } else {
+                    "Untitled Story".to_string()
+                };
+            }
+            if parsed.premise.trim().is_empty() {
+                parsed.premise = if is_zh {
+                    "基于关键事件生成的故事草案。".to_string()
+                } else {
+                    "Story draft generated from key events.".to_string()
+                };
+            }
+            if parsed.first_chapter.trim().is_empty() {
+                parsed.first_chapter = response.trim().to_string();
+            }
+            Ok(parsed)
+        }
+        Err(_) => Ok(StoryGenerationResult {
+            title: if is_zh {
+                "故事草案（未结构化）".to_string()
+            } else {
+                "Story Draft (Unstructured)".to_string()
+            },
+            premise: if is_zh {
+                "模型未按 JSON 输出，已返回原始文本。可重试一次。".to_string()
+            } else {
+                "Model did not return JSON. Raw output is shown. You can retry.".to_string()
+            },
+            outline: Vec::new(),
+            chapter_plan: Vec::new(),
+            first_chapter: response.trim().to_string(),
+            continuity_checks: vec![if is_zh {
+                "建议再次生成以获得结构化章节计划。".to_string()
+            } else {
+                "Retry generation to obtain a fully structured chapter plan.".to_string()
+            }],
+        }),
+    }
+}
+
+#[tauri::command]
+fn continue_story_chapter(
+    request: StoryContinuationRequest,
+    config_state: State<ModelConfigState>,
+) -> Result<StoryContinuationResult, String> {
+    let config = config_state.0.lock().map_err(|e| e.to_string())?.clone();
+    if let ModelProvider::Ollama { base_url, model_name, .. } = &config.provider {
+        ensure_ollama_running(base_url)?;
+        ensure_model_available(base_url, model_name)?;
+    }
+
+    let next_chapter = request
+        .target_chapter
+        .unwrap_or_else(|| request.written_chapters.len() + 1)
+        .max(1);
+
+    let prompt = build_story_continue_prompt(&request, next_chapter);
+    let response = call_model_simple(&config, &prompt)?;
+
+    let is_zh = request
+        .language
+        .as_deref()
+        .map(|lang| lang.starts_with("zh"))
+        .unwrap_or(true);
+
+    match parse_story_continuation_response(&response, next_chapter) {
+        Ok(mut parsed) => {
+            if parsed.title.trim().is_empty() {
+                parsed.title = if is_zh {
+                    format!("第{}章", parsed.chapter)
+                } else {
+                    format!("Chapter {}", parsed.chapter)
+                };
+            }
+            if parsed.content.trim().is_empty() {
+                parsed.content = response.trim().to_string();
+            }
+            if parsed.summary.trim().is_empty() {
+                parsed.summary = if is_zh {
+                    "已生成本章草稿。".to_string()
+                } else {
+                    "Chapter draft generated.".to_string()
+                };
+            }
+            Ok(parsed)
+        }
+        Err(_) => Ok(StoryContinuationResult {
+            chapter: next_chapter,
+            title: if is_zh {
+                format!("第{}章（未结构化）", next_chapter)
+            } else {
+                format!("Chapter {} (Unstructured)", next_chapter)
+            },
+            content: response.trim().to_string(),
+            summary: if is_zh {
+                "模型未按 JSON 输出，已回退为原始文本。".to_string()
+            } else {
+                "Model did not return JSON, falling back to raw output.".to_string()
+            },
+        }),
+    }
+}
+
+#[tauri::command]
+fn rewrite_story_chapter(
+    request: StoryRewriteChapterRequest,
+    config_state: State<ModelConfigState>,
+) -> Result<StoryContinuationResult, String> {
+    let target = request
+        .written_chapters
+        .iter()
+        .find(|x| x.chapter == request.target_chapter)
+        .cloned()
+        .ok_or_else(|| format!("Chapter {} not found in written chapters.", request.target_chapter))?;
+
+    let config = config_state.0.lock().map_err(|e| e.to_string())?.clone();
+    if let ModelProvider::Ollama { base_url, model_name, .. } = &config.provider {
+        ensure_ollama_running(base_url)?;
+        ensure_model_available(base_url, model_name)?;
+    }
+
+    let prompt = build_story_rewrite_prompt(&request, &target);
+    let response = call_model_simple(&config, &prompt)?;
+
+    let is_zh = request
+        .language
+        .as_deref()
+        .map(|lang| lang.starts_with("zh"))
+        .unwrap_or(true);
+
+    match parse_story_continuation_response(&response, request.target_chapter) {
+        Ok(mut parsed) => {
+            parsed.chapter = request.target_chapter;
+            if parsed.title.trim().is_empty() {
+                parsed.title = if !target.title.trim().is_empty() {
+                    target.title
+                } else if is_zh {
+                    format!("第{}章", request.target_chapter)
+                } else {
+                    format!("Chapter {}", request.target_chapter)
+                };
+            }
+            if parsed.content.trim().is_empty() {
+                parsed.content = response.trim().to_string();
+            }
+            if parsed.summary.trim().is_empty() {
+                parsed.summary = if is_zh {
+                    "已按修改意见完成章节重写。".to_string()
+                } else {
+                    "Chapter has been rewritten based on the revision notes.".to_string()
+                };
+            }
+            Ok(parsed)
+        }
+        Err(_) => Ok(StoryContinuationResult {
+            chapter: request.target_chapter,
+            title: if !target.title.trim().is_empty() {
+                target.title
+            } else if is_zh {
+                format!("第{}章（重写）", request.target_chapter)
+            } else {
+                format!("Chapter {} (Rewrite)", request.target_chapter)
+            },
+            content: response.trim().to_string(),
+            summary: if is_zh {
+                "模型未按 JSON 输出，已回退为原始重写文本。".to_string()
+            } else {
+                "Model did not return JSON; using raw rewritten text.".to_string()
+            },
+        }),
+    }
+}
+
 /// Download and open the Ollama installer (Windows/macOS: download package; Linux: open download page).
 #[tauri::command]
 fn download_ollama_installer() -> Result<String, String> {
@@ -687,7 +2118,7 @@ fn update_model_config(
     let mut guard = config_state.0.lock().map_err(|e| e.to_string())?;
     *guard = new_config.clone();
 
-    let config_path = data_dir.0.join("model_config.json");
+    let config_path = get_current_data_dir(&data_dir)?.join("model_config.json");
     new_config.save_to_file(&config_path)?;
 
     Ok(())
@@ -841,14 +2272,44 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-            let db_dir = app_data_dir.join("database");
-            let db_path = db_dir.join("kraph.db");
+            fs::create_dir_all(&app_data_dir).map_err(|e| e.to_string())?;
+
+            let libraries_root_dir = libraries_root(&app_data_dir);
+            fs::create_dir_all(&libraries_root_dir).map_err(|e| e.to_string())?;
+
+            let default_library_id = "default".to_string();
+            let default_library_dir = libraries_root_dir.join(&default_library_id);
+            let legacy_db_path = app_data_dir.join("database").join("kraph.db");
+            let legacy_memories_dir = app_data_dir.join("memories");
+            let legacy_model_config = app_data_dir.join("model_config.json");
+
+            if !default_library_dir.exists() {
+                ensure_library_structure(&default_library_dir)?;
+                // Preserve existing single-library data by moving it into the default library.
+                move_path_if_exists(&legacy_db_path, &default_library_dir.join("database").join("kraph.db"))?;
+                move_path_if_exists(&legacy_memories_dir, &default_library_dir.join("memories"))?;
+                move_path_if_exists(&legacy_model_config, &default_library_dir.join("model_config.json"))?;
+                let _ = save_library_meta(&default_library_dir, "Default");
+            }
+
+            let mut current_library_id =
+                read_saved_current_library_id(&app_data_dir).unwrap_or_else(|| default_library_id.clone());
+            if !libraries_root_dir.join(&current_library_id).exists() {
+                current_library_id = default_library_id.clone();
+            }
+            let current_library_dir = libraries_root_dir.join(&current_library_id);
+            ensure_library_structure(&current_library_dir)?;
+            let _ = persist_current_library_id(&app_data_dir, &current_library_id);
+
+            let db_path = current_library_dir.join("database").join("kraph.db");
             let conn = init_db(&db_path).map_err(|e| e.to_string())?;
             app.manage(DbState(Mutex::new(Some(conn))));
-            app.manage(AppDataDir(app_data_dir.clone()));
+            app.manage(AppRootDir(app_data_dir.clone()));
+            app.manage(AppDataDir(Mutex::new(current_library_dir.clone())));
+            app.manage(CurrentLibraryId(Mutex::new(current_library_id)));
 
-            // Load model configuration from disk (or use defaults)
-            let config_path = app_data_dir.join("model_config.json");
+            // Load model configuration from the current library (or use defaults)
+            let config_path = library_model_config_path(&current_library_dir);
             let model_config = ModelConfig::load_from_file(&config_path).unwrap_or_default();
             app.manage(ModelConfigState(Mutex::new(model_config)));
 
@@ -856,6 +2317,15 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             greet,
+            list_memory_libraries,
+            get_current_memory_library,
+            create_memory_library,
+            switch_memory_library,
+            rename_memory_library,
+            delete_memory_library,
+            save_story_project,
+            list_story_projects,
+            load_story_project,
             open_memories_folder,
             get_memories_folder_path,
             list_memories_dir,
@@ -875,6 +2345,9 @@ pub fn run() {
             setup_whisper,
             transcribe_audio,
             answer_question,
+            generate_story_from_events,
+            continue_story_chapter,
+            rewrite_story_chapter,
             download_ollama_installer,
             check_ollama,
             run_ollama_setup,
