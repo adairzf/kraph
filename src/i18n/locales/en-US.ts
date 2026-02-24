@@ -113,6 +113,13 @@ export default {
     placeholder: 'Enter your question…',
     thinking: 'Thinking…',
     ask: 'Ask',
+    progress: {
+      connecting: 'Connecting to model',
+      retrieving: 'Retrieving related memories',
+      generating: 'Generating answer',
+      done: 'Answer completed ({seconds}s)',
+      failed: 'Request finished ({seconds}s)',
+    },
     ollamaError: {
       message: 'Ollama service error detected. Run one-click initialization?\n(Auto install, start service, and pull model)',
       title: 'Ollama Service Error',

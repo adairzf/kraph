@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { nextTick, ref } from 'vue'
 import { ElMessageBox } from 'element-plus'
 import { answerQuestion } from '../utils/tauriApi'
 import { useOllamaStore } from '../stores/ollamaStore'
@@ -11,6 +11,11 @@ const question = ref('')
 const answer = ref('')
 const loading = ref(false)
 const error = ref<string | null>(null)
+const progressText = ref('')
+const progressSummary = ref('')
+const progressTimer = ref<number | null>(null)
+const progressStep = ref(0)
+const progressStartedAt = ref<number | null>(null)
 
 const ollamaStore = useOllamaStore()
 
@@ -18,20 +23,30 @@ const ollamaStore = useOllamaStore()
 function isOllamaError(msg: string): boolean {
   const keywords = [
     'ollama', 'Ollama',
-    'connection refused', 'connection reset',
-    '502', 'bad gateway',
+    'localhost:11434',
+    '127.0.0.1:11434',
   ]
   return keywords.some((k) => msg.includes(k))
 }
 
 async function ask() {
   const q = question.value.trim()
-  if (!q) return
+  if (!q || loading.value) return
   loading.value = true
   error.value = null
   answer.value = ''
+  startProgress()
+  await nextTick()
+  await new Promise<void>((resolve) => {
+    window.setTimeout(() => resolve(), 0)
+  })
+  await new Promise<void>((resolve) => {
+    window.requestAnimationFrame(() => resolve())
+  })
+  let success = false
   try {
     answer.value = await answerQuestion(q)
+    success = true
   } catch (e) {
     const errMsg = e instanceof Error ? e.message : String(e)
     error.value = errMsg
@@ -54,7 +69,55 @@ async function ask() {
     }
   } finally {
     loading.value = false
+    stopProgress(success)
   }
+}
+
+function currentElapsedSeconds(): number {
+  if (!progressStartedAt.value) return 0
+  return Math.max(0, Math.floor((Date.now() - progressStartedAt.value) / 1000))
+}
+
+function updateProgressText() {
+  const elapsed = currentElapsedSeconds()
+  let phaseKey = 'searchPanel.progress.connecting'
+  if (elapsed >= 4) phaseKey = 'searchPanel.progress.retrieving'
+  if (elapsed >= 10) phaseKey = 'searchPanel.progress.generating'
+
+  const stepMap: Record<string, number> = {
+    'searchPanel.progress.connecting': 1,
+    'searchPanel.progress.retrieving': 2,
+    'searchPanel.progress.generating': 3,
+  }
+  progressStep.value = stepMap[phaseKey]
+  progressText.value = `${t(phaseKey)} · ${elapsed}s`
+}
+
+function startProgress() {
+  progressSummary.value = ''
+  progressText.value = ''
+  progressStep.value = 0
+  progressStartedAt.value = Date.now()
+  updateProgressText()
+
+  if (progressTimer.value != null) {
+    window.clearInterval(progressTimer.value)
+  }
+  progressTimer.value = window.setInterval(updateProgressText, 500)
+}
+
+function stopProgress(success: boolean) {
+  if (progressTimer.value != null) {
+    window.clearInterval(progressTimer.value)
+    progressTimer.value = null
+  }
+  const elapsed = currentElapsedSeconds()
+  progressStep.value = success ? 4 : Math.max(1, progressStep.value)
+  progressSummary.value = success
+    ? t('searchPanel.progress.done', { seconds: elapsed })
+    : t('searchPanel.progress.failed', { seconds: elapsed })
+  progressStartedAt.value = null
+  progressText.value = ''
 }
 </script>
 
@@ -73,11 +136,23 @@ async function ask() {
       <button
         type="button"
         class="btn-ask"
-        :disabled="loading || !question.trim()"
+        :disabled="!question.trim()"
         @click="ask"
       >
         {{ loading ? t('searchPanel.thinking') : t('searchPanel.ask') }}
       </button>
+    </div>
+    <div
+      v-if="loading || progressSummary"
+      class="progress-box"
+    >
+      <div class="progress-track">
+        <div
+          class="progress-fill"
+          :style="{ width: `${Math.min(100, progressStep * 25)}%` }"
+        />
+      </div>
+      <p class="progress-text">{{ loading ? progressText : progressSummary }}</p>
     </div>
     <p v-if="error" class="error">{{ error }}</p>
     <div v-else-if="answer" class="answer-box">
@@ -133,6 +208,32 @@ async function ask() {
 }
 .btn-ask:hover { opacity: 0.88; }
 .btn-ask:disabled { opacity: 0.4; cursor: not-allowed; }
+.progress-box {
+  margin: 0 0 10px 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg3);
+}
+.progress-track {
+  width: 100%;
+  height: 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-dim) 18%, transparent);
+  overflow: hidden;
+}
+.progress-fill {
+  height: 100%;
+  width: 0;
+  border-radius: inherit;
+  background: var(--grad);
+  transition: width 0.3s ease;
+}
+.progress-text {
+  margin: 6px 0 0 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
 .error {
   color: var(--red);
   font-size: 13px;

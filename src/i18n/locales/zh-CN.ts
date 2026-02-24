@@ -113,6 +113,13 @@ export default {
     placeholder: '输入问题…',
     thinking: '思考中…',
     ask: '提问',
+    progress: {
+      connecting: '正在连接模型',
+      retrieving: '正在检索相关记忆',
+      generating: '正在生成回答',
+      done: '回答完成（耗时 {seconds}s）',
+      failed: '请求结束（耗时 {seconds}s）',
+    },
     ollamaError: {
       message: '检测到 Ollama 服务异常，是否立即运行一键初始化？\n（将自动完成安装检测、服务启动、模型下载）',
       title: 'Ollama 服务异常',

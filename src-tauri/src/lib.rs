@@ -18,7 +18,7 @@ use file_manager::{list_memory_files, read_memory, write_memory, MdRecord};
 use model_client::{call_model_extract, call_model_fusion, call_model_simple};
 use model_config::{ModelConfig, ModelProvider};
 use ollama::{
-    call_ollama_extract_blocking, call_ollama_simple,
+    call_ollama_extract_blocking,
     check_ollama_status, ensure_model_available, ensure_ollama_running,
     ExtractedData, ENTITY_EXTRACT_PROMPT, KNOWLEDGE_FUSION_PROMPT,
 };
@@ -1489,17 +1489,23 @@ const OLLAMA_MODEL: &str = "qwen2.5:7b";
 const OLLAMA_MODEL_EXTRACT: &str = "qwen2.5:7b";
 
 /// Entity-aware memory retrieval and intelligent Q&A.
-#[tauri::command]
-fn answer_question(question: String, db: State<DbState>) -> Result<String, String> {
-    if question.trim().is_empty() {
+fn do_answer_question(
+    question: String,
+    config: ModelConfig,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
+    let question = question.trim().to_string();
+    if question.is_empty() {
         return Ok(String::new());
     }
-    ensure_ollama_running(OLLAMA_URL)?;
-    ensure_model_available(OLLAMA_URL, OLLAMA_MODEL)?;
-    let entity_name = call_ollama_simple(
-        OLLAMA_URL,
-        OLLAMA_MODEL,
-        &format!("{}{}", ollama::EXTRACT_ENTITY_PROMPT, question.trim()),
+    if let ModelProvider::Ollama { base_url, model_name, .. } = &config.provider {
+        ensure_ollama_running(base_url)?;
+        ensure_model_available(base_url, model_name)?;
+    }
+
+    let entity_name = call_model_simple(
+        &config,
+        &format!("{}{}", ollama::EXTRACT_ENTITY_PROMPT, question),
     )
     .ok()
     .and_then(|s| {
@@ -1511,12 +1517,23 @@ fn answer_question(question: String, db: State<DbState>) -> Result<String, Strin
         }
     });
 
-    let mut guard = (&*db).0.lock().map_err(|e: std::sync::PoisonError<_>| e.to_string())?;
-    let conn = guard.as_mut().ok_or("database not initialized")?;
+    // Keep DB lock scope minimal so long model calls don't block other commands.
+    let memories = {
+        let db = app.state::<DbState>();
+        let mut guard =
+            (&*db).0.lock().map_err(|e: std::sync::PoisonError<_>| e.to_string())?;
+        let conn = guard.as_mut().ok_or("database not initialized")?;
 
-    let memories = if let Some(name) = entity_name {
-        if let Some(entity) = get_entity_by_name(conn, &name).map_err(|e| e.to_string())? {
-            get_memories_for_entity(conn, entity.id).map_err(|e| e.to_string())?
+        if let Some(name) = entity_name {
+            if let Some(entity) = get_entity_by_name(conn, &name).map_err(|e| e.to_string())? {
+                get_memories_for_entity(conn, entity.id).map_err(|e| e.to_string())?
+            } else {
+                list_memories(conn)
+                    .map_err(|e| e.to_string())?
+                    .into_iter()
+                    .take(10)
+                    .collect()
+            }
         } else {
             list_memories(conn)
                 .map_err(|e| e.to_string())?
@@ -1524,12 +1541,6 @@ fn answer_question(question: String, db: State<DbState>) -> Result<String, Strin
                 .take(10)
                 .collect()
         }
-    } else {
-        list_memories(conn)
-            .map_err(|e| e.to_string())?
-            .into_iter()
-            .take(10)
-            .collect()
     };
 
     if memories.is_empty() {
@@ -1547,10 +1558,22 @@ fn answer_question(question: String, db: State<DbState>) -> Result<String, Strin
         ollama::ANSWER_PROMPT_PREFIX,
         context,
         ollama::ANSWER_PROMPT_SUFFIX,
-        question.trim()
+        question
     );
 
-    call_ollama_simple(OLLAMA_URL, OLLAMA_MODEL, &prompt)
+    call_model_simple(&config, &prompt)
+}
+
+#[tauri::command]
+async fn answer_question(
+    app: tauri::AppHandle,
+    question: String,
+    config_state: State<'_, ModelConfigState>,
+) -> Result<String, String> {
+    let config = config_state.0.lock().map_err(|e| e.to_string())?.clone();
+    tokio::task::spawn_blocking(move || do_answer_question(question, config, app))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 fn truncate_for_prompt(input: &str, max_chars: usize) -> String {
