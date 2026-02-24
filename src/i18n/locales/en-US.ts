@@ -212,6 +212,7 @@ export default {
     preview: 'Preview',
     saving: 'Saving…',
     save: 'Save',
+    noChanges: 'No changes detected. Nothing to save.',
     deleting: 'Deleting…',
     delete: 'Delete',
     empty: 'Select a memory from the left, or enter new content above and save.',

@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { nextTick, ref, watch } from 'vue'
+import { listen } from '@tauri-apps/api/event'
 import { useMemoryStore } from '../stores/memoryStore'
 import { useGraphStore } from '../stores/graphStore'
 import type { Memory } from '../types/memory'
@@ -26,11 +27,19 @@ const content = ref('')
 const previewMode = ref(false)
 const saving = ref(false)
 const deleting = ref(false)
+type SaveProgressStep = {
+  message: string
+  status: 'info' | 'running' | 'success' | 'warning' | 'error' | 'skipped' | 'done'
+}
+const saveProgress = ref<SaveProgressStep[]>([])
 
 watch(
   () => memoryStore.currentMemory,
   (m: Memory | null) => {
     content.value = m?.content ?? ''
+    if (m) {
+      previewMode.value = true
+    }
   },
   { immediate: true }
 )
@@ -39,17 +48,40 @@ const html = () => (previewMode.value ? marked(content.value) : '')
 
 async function handleSave() {
   if (!memoryStore.currentMemory || !content.value.trim()) return
+  if (content.value.trim() === memoryStore.currentMemory.content.trim()) {
+    ElMessage.info(t('editorPanel.noChanges'))
+    return
+  }
   saving.value = true
+  saveProgress.value = []
+
+  const unlisten = await listen<{ code: string; params: Record<string, unknown>; status: string }>('memory-save-progress', (event) => {
+    const { code, params } = event.payload
+    const message = te(code) ? t(code, params) : code
+    saveProgress.value.push({
+      message,
+      status: event.payload.status as SaveProgressStep['status'],
+    })
+  })
+
   try {
+    await nextTick()
+    await new Promise<void>((resolve) => {
+      window.requestAnimationFrame(() => resolve())
+    })
     await memoryStore.updateMemoryContent(memoryStore.currentMemory.id, content.value.trim())
     await graphStore.fetchGraph()
     ElMessage.success(t('editorPanel.saveSuccess'))
+    await new Promise((resolve) => setTimeout(resolve, 1200))
+    saveProgress.value = []
   } catch (e) {
     const raw = e instanceof Error ? e.message : String(e)
     const [msg, isKnown] = parseBackendError(raw)
     // Known backend errors (entity extraction) are self-contained; others get the "saveFailed" prefix
     ElMessage.error(isKnown ? msg : t('editorPanel.saveFailed') + msg)
+    saveProgress.value = []
   } finally {
+    unlisten()
     saving.value = false
   }
 }
@@ -92,18 +124,18 @@ async function handleDelete() {
         <button
           type="button"
           class="tab"
-          :class="{ active: !previewMode }"
-          @click="previewMode = false"
-        >
-          {{ t('editorPanel.edit') }}
-        </button>
-        <button
-          type="button"
-          class="tab"
           :class="{ active: previewMode }"
           @click="previewMode = true"
         >
           {{ t('editorPanel.preview') }}
+        </button>
+        <button
+          type="button"
+          class="tab"
+          :class="{ active: !previewMode }"
+          @click="previewMode = false"
+        >
+          {{ t('editorPanel.edit') }}
         </button>
       </div>
       <div v-if="memoryStore.currentMemory" class="actions">
@@ -140,6 +172,25 @@ async function handleDelete() {
         class="preview-content"
         v-html="html()"
       />
+      <div v-if="saveProgress.length > 0" class="save-progress">
+        <div
+          v-for="(step, i) in saveProgress"
+          :key="i"
+          class="progress-step"
+          :class="`step-${step.status}`"
+        >
+          <span class="step-icon">
+            <span v-if="step.status === 'running'" class="spinner">⏳</span>
+            <span v-else-if="step.status === 'success'">✅</span>
+            <span v-else-if="step.status === 'done'">🎉</span>
+            <span v-else-if="step.status === 'warning'">⚠️</span>
+            <span v-else-if="step.status === 'error'">❌</span>
+            <span v-else-if="step.status === 'skipped'">⏭️</span>
+            <span v-else>ℹ️</span>
+          </span>
+          <span class="step-message">{{ step.message }}</span>
+        </div>
+      </div>
     </template>
   </div>
 </template>
@@ -238,6 +289,37 @@ async function handleDelete() {
 .preview-content :deep(h2) { font-size: 16px; color: var(--text); margin-bottom: 6px; }
 .preview-content :deep(ul) { padding-left: 20px; color: var(--text-muted); }
 .preview-content :deep(p) { color: var(--text-muted); margin-bottom: 8px; }
+
+.save-progress {
+  margin-top: 8px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg3);
+  border-radius: 8px;
+  max-height: 150px;
+  overflow-y: auto;
+}
+.progress-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 4px 0;
+}
+.step-icon {
+  display: inline-flex;
+  width: 16px;
+  justify-content: center;
+}
+.step-message {
+  flex: 1;
+}
+.step-running { color: var(--text); }
+.step-success,
+.step-done { color: var(--green); }
+.step-warning { color: #f59e0b; }
+.step-error { color: var(--red); }
 .preview-content :deep(code) {
   background: var(--bg4);
   border: 1px solid var(--border);

@@ -221,6 +221,15 @@ watch(
   },
 )
 
+watch(
+  () => memoryStore.currentMemory?.id ?? null,
+  (memoryId) => {
+    if (memoryId != null) {
+      rightView.value = 'edit'
+    }
+  },
+)
+
 function openSetupDialog() {
   setupDialogRef.value?.open()
 }

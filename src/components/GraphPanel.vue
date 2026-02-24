@@ -40,6 +40,13 @@ const nodeColors: Record<string, string> = {
   Organization: '#3b82f6',
 }
 
+type GraphLinkItem = {
+  source: string
+  target: string
+  relation: string
+  strength: number
+}
+
 const availableTypes = computed(() => {
   const nodes = graphStore.graphData?.nodes ?? []
   return [...new Set(nodes.map((n) => n.type))].sort((a, b) => a.localeCompare(b))
@@ -96,6 +103,88 @@ function currentTheme() {
 
 function onThemeChanged() {
   themeRefreshTick.value += 1
+}
+
+function linkPairKey(source: string, target: string): string {
+  return source < target ? `${source}::${target}` : `${target}::${source}`
+}
+
+function clampCurveness(value: number): number {
+  return Math.max(-0.55, Math.min(0.55, value))
+}
+
+function buildCurvedLinks(
+  rawLinks: GraphLinkItem[],
+  isLight: boolean,
+  edgeLineColor: string,
+) {
+  const pairGroups = new Map<string, number[]>()
+  rawLinks.forEach((link, index) => {
+    const key = linkPairKey(link.source, link.target)
+    const group = pairGroups.get(key)
+    if (group) {
+      group.push(index)
+    } else {
+      pairGroups.set(key, [index])
+    }
+  })
+
+  const curvenessByIndex = new Array(rawLinks.length).fill(0)
+
+  for (const indices of pairGroups.values()) {
+    if (indices.length <= 1) continue
+
+    const directionGroups = new Map<string, number[]>()
+    for (const index of indices) {
+      const link = rawLinks[index]
+      const dirKey = `${link.source}->${link.target}`
+      const group = directionGroups.get(dirKey)
+      if (group) {
+        group.push(index)
+      } else {
+        directionGroups.set(dirKey, [index])
+      }
+    }
+
+    const directionKeys = [...directionGroups.keys()].sort((a, b) => a.localeCompare(b))
+
+    if (directionKeys.length === 2) {
+      const [dirA, dirB] = directionKeys
+      const groupA = (directionGroups.get(dirA) ?? []).slice()
+      const groupB = (directionGroups.get(dirB) ?? []).slice()
+      groupA.sort((ia, ib) => rawLinks[ia].relation.localeCompare(rawLinks[ib].relation))
+      groupB.sort((ia, ib) => rawLinks[ia].relation.localeCompare(rawLinks[ib].relation))
+
+      groupA.forEach((index, order) => {
+        curvenessByIndex[index] = clampCurveness(0.2 + order * 0.1)
+      })
+      groupB.forEach((index, order) => {
+        // For reversed direction, using the same sign keeps the curve on the opposite side
+        // because ECharts computes normal vector from source->target.
+        curvenessByIndex[index] = clampCurveness(0.2 + order * 0.1)
+      })
+      continue
+    }
+
+    const ordered = indices
+      .slice()
+      .sort((ia, ib) => rawLinks[ia].relation.localeCompare(rawLinks[ib].relation))
+    const mid = (ordered.length - 1) / 2
+    ordered.forEach((index, order) => {
+      curvenessByIndex[index] = clampCurveness((order - mid) * 0.12)
+    })
+  }
+
+  return rawLinks.map((l, index) => ({
+    source: l.source,
+    target: l.target,
+    value: l.relation,
+    lineStyle: {
+      width: Math.max(isLight ? 1.8 : 1, Math.min(l.strength, isLight ? 3.4 : 3)),
+      color: edgeLineColor,
+      curveness: curvenessByIndex[index],
+    },
+  }))
 }
 
 const visibleGraphData = computed(() => {
@@ -341,15 +430,7 @@ const chartOption = computed(() => {
       z: 1,
     }
   })
-  const links = g.links.map((l: { source: string; target: string; relation: string; strength: number }) => ({
-    source: l.source,
-    target: l.target,
-    value: l.relation,
-    lineStyle: {
-      width: Math.max(isLight ? 1.8 : 1, Math.min(l.strength, isLight ? 3.4 : 3)),
-      color: edgeLineColor,
-    },
-  }))
+  const links = buildCurvedLinks(g.links as GraphLinkItem[], isLight, edgeLineColor)
   return {
     backgroundColor: 'transparent',
     tooltip: {
@@ -373,6 +454,9 @@ const chartOption = computed(() => {
           show: true,
           fontSize: 11,
           color: edgeLabelColor,
+          backgroundColor: isLight ? 'rgba(248, 250, 252, 0.82)' : 'rgba(15, 23, 42, 0.62)',
+          padding: [2, 4],
+          borderRadius: 4,
           formatter: '{c}',
         },
         data: nodes,
@@ -383,6 +467,7 @@ const chartOption = computed(() => {
           gravity: 0.08,
         },
         emphasis: {
+          scale: false,
           focus: 'adjacency',
           lineStyle: {
             color: edgeEmphasisColor,

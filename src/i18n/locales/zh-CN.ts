@@ -212,6 +212,7 @@ export default {
     preview: '预览',
     saving: '保存中…',
     save: '保存',
+    noChanges: '内容未变化，无需保存',
     deleting: '删除中…',
     delete: '删除',
     empty: '从左侧选择一条记忆，或在上方输入新内容并保存。',

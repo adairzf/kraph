@@ -392,21 +392,38 @@ pub fn delete_memory(conn: &Connection, id: i64) -> SqliteResult<()> {
     // Delete the memory row (memory_entities associations are removed via CASCADE)
     conn.execute("DELETE FROM memories WHERE id = ?1", params![id])?;
 
-    // Remove orphaned relations (referencing non-existent entities)
+    // Re-process graph integrity after memory deletion:
+    // 1) Remove relations that point to entities no longer referenced by any memory.
+    // 2) Remove entities that are no longer referenced by any memory.
+    // 3) Final pass for dangling relations.
+    prune_orphan_entities_and_relations(conn)?;
+
+    Ok(())
+}
+
+pub fn prune_orphan_entities_and_relations(conn: &Connection) -> SqliteResult<()> {
     conn.execute(
         r#"DELETE FROM relations
-           WHERE from_entity_id NOT IN (SELECT id FROM entities)
-              OR to_entity_id NOT IN (SELECT id FROM entities)"#,
+           WHERE from_entity_id IN (
+                    SELECT e.id
+                    FROM entities e
+                    LEFT JOIN memory_entities me ON me.entity_id = e.id
+                    WHERE me.entity_id IS NULL
+                )
+              OR to_entity_id IN (
+                    SELECT e.id
+                    FROM entities e
+                    LEFT JOIN memory_entities me ON me.entity_id = e.id
+                    WHERE me.entity_id IS NULL
+                )"#,
         [],
     )?;
 
-    // Remove orphaned entities (not referenced by any memory)
     conn.execute(
         "DELETE FROM entities WHERE id NOT IN (SELECT DISTINCT entity_id FROM memory_entities)",
         [],
     )?;
 
-    // Second pass: removing entities may have created new orphaned relations
     conn.execute(
         r#"DELETE FROM relations
            WHERE from_entity_id NOT IN (SELECT id FROM entities)

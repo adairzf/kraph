@@ -11,7 +11,7 @@ use database::{
     get_memory_by_id, init_db, insert_memory, link_memory_entity, list_memories,
     list_relations, upsert_entity, upsert_relation, update_memory, delete_memory,
     clear_memory_entities, cleanup_database, clear_all_data, add_entity_alias,
-    find_entity_id_by_name_or_alias, merge_entities,
+    find_entity_id_by_name_or_alias, merge_entities, prune_orphan_entities_and_relations,
     DbState, Entity, GraphData, Memory,
 };
 use file_manager::{list_memory_files, read_memory, write_memory, MdRecord};
@@ -1362,19 +1362,20 @@ fn do_update_memory(
 
     // Step 4: Persist to database
     emit_save_progress(&app, "saveProgress.step4.saving", "running", serde_json::json!({}));
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
 
-    update_memory(conn, memory_id, &content, tags_str.as_deref()).map_err(|e| e.to_string())?;
-    clear_memory_entities(conn, memory_id).map_err(|e| e.to_string())?;
+    update_memory(&tx, memory_id, &content, tags_str.as_deref()).map_err(|e| e.to_string())?;
+    clear_memory_entities(&tx, memory_id).map_err(|e| e.to_string())?;
 
     let mut name_to_id: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
     for e in &entities {
         let attrs = e.attributes.as_ref().map(|a| a.to_string());
-        let entity_id = match find_entity_id_by_name_or_alias(conn, &e.name).map_err(|e| e.to_string())? {
+        let entity_id = match find_entity_id_by_name_or_alias(&tx, &e.name).map_err(|e| e.to_string())? {
             Some(id) => id,
-            None => upsert_entity(conn, &e.entity_type, &e.name, attrs.as_deref())
+            None => upsert_entity(&tx, &e.entity_type, &e.name, attrs.as_deref())
                 .map_err(|e| e.to_string())?,
         };
-        link_memory_entity(conn, memory_id, entity_id).map_err(|e| e.to_string())?;
+        link_memory_entity(&tx, memory_id, entity_id).map_err(|e| e.to_string())?;
         name_to_id.insert(e.name.clone(), entity_id);
     }
     for alias_info in &aliases {
@@ -1382,37 +1383,23 @@ fn do_update_memory(
         let alias_id = name_to_id.get(&alias_info.alias);
         match (primary_id, alias_id) {
             (Some(&pid), Some(&aid)) if pid != aid => {
-                merge_entities(conn, aid, pid).map_err(|e| e.to_string())?;
+                merge_entities(&tx, aid, pid).map_err(|e| e.to_string())?;
                 name_to_id.insert(alias_info.alias.clone(), pid);
             }
             (Some(&pid), None) => {
-                add_entity_alias(conn, pid, &alias_info.alias).map_err(|e| e.to_string())?;
+                add_entity_alias(&tx, pid, &alias_info.alias).map_err(|e| e.to_string())?;
             }
             _ => {}
         }
     }
     for r in &relations {
         if let (Some(&from_id), Some(&to_id)) = (name_to_id.get(&r.from), name_to_id.get(&r.to)) {
-            let _ = upsert_relation(conn, from_id, to_id, &r.relation);
+            let _ = upsert_relation(&tx, from_id, to_id, &r.relation);
         }
     }
 
-    conn.execute(
-        r#"DELETE FROM relations
-           WHERE from_entity_id NOT IN (SELECT id FROM entities)
-              OR to_entity_id NOT IN (SELECT id FROM entities)"#,
-        [],
-    ).map_err(|e| e.to_string())?;
-    conn.execute(
-        "DELETE FROM entities WHERE id NOT IN (SELECT DISTINCT entity_id FROM memory_entities)",
-        [],
-    ).map_err(|e| e.to_string())?;
-    conn.execute(
-        r#"DELETE FROM relations
-           WHERE from_entity_id NOT IN (SELECT id FROM entities)
-              OR to_entity_id NOT IN (SELECT id FROM entities)"#,
-        [],
-    ).map_err(|e| e.to_string())?;
+    prune_orphan_entities_and_relations(&tx).map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
 
     emit_save_progress(&app, "saveProgress.updateDone", "done", serde_json::json!({}));
     println!("✅ Memory updated successfully!");
