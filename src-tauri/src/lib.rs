@@ -1040,29 +1040,29 @@ fn do_save_memory(
         None
     };
 
-    let db = app.state::<DbState>();
-    let mut guard = db.0.lock().map_err(|e: std::sync::PoisonError<_>| e.to_string())?;
-    let conn = guard.as_mut().ok_or("database not initialized")?;
-
     // Step 2: Fetch related historical memories for knowledge fusion
     emit_save_progress(&app, "saveProgress.step2.lookingUp", "running", serde_json::json!({}));
     println!("🔍 [Step 2] Looking up related historical memories...");
     let historical_memories = if let Some(ref ex) = quick_extracted {
-        let mut all_memories = Vec::new();
-        for entity in &ex.entities {
-            if let Ok(Some(existing_entity)) = get_entity_by_name(conn, &entity.name) {
-                if let Ok(memories) = get_memories_for_entity(conn, existing_entity.id) {
-                    for mem in memories.into_iter().take(5) {
-                        if !all_memories.contains(&mem.content) {
-                            all_memories.push(mem.content);
-                        }
-                    }
-                }
-            }
+        let selected = {
+            let db = app.state::<DbState>();
+            let mut guard =
+                db.0.lock().map_err(|e: std::sync::PoisonError<_>| e.to_string())?;
+            let conn = guard.as_mut().ok_or("database not initialized")?;
+            collect_relevant_historical_memories(conn, ex, &content, None)?
+        };
+        if selected.is_empty() {
+            emit_save_progress(&app, "saveProgress.step2.noHistory", "success", serde_json::json!({}));
+        } else {
+            emit_save_progress(&app, "saveProgress.step2.found", "success", serde_json::json!({ "count": selected.len() }));
         }
-        emit_save_progress(&app, "saveProgress.step2.found", "success", serde_json::json!({ "count": all_memories.len() }));
-        println!("✅ Found {} related historical memories", all_memories.len());
-        all_memories
+        println!(
+            "✅ Selected {} relevant memories (top_k={}, budget={} chars)",
+            selected.len(),
+            RAG_TOP_K,
+            RAG_MAX_CONTEXT_CHARS
+        );
+        selected
     } else {
         emit_save_progress(&app, "saveProgress.step2.noHistory", "success", serde_json::json!({}));
         Vec::new()
@@ -1119,44 +1119,52 @@ fn do_save_memory(
     )?;
     let path_str = path.to_string_lossy().to_string();
 
-    let tags_str = tags.as_ref().map(|t| t.join(","));
-    let memory_id = insert_memory(conn, &content, Some(&path_str), tags_str.as_deref())
-        .map_err(|e| e.to_string())?;
+    let saved_memory = {
+        let db = app.state::<DbState>();
+        let mut guard = db.0.lock().map_err(|e: std::sync::PoisonError<_>| e.to_string())?;
+        let conn = guard.as_mut().ok_or("database not initialized")?;
 
-    let mut name_to_id: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
-    for e in &entities {
-        let attrs = e.attributes.as_ref().map(|a| a.to_string());
-        let entity_id = match find_entity_id_by_name_or_alias(conn, &e.name).map_err(|e| e.to_string())? {
-            Some(id) => id,
-            None => upsert_entity(conn, &e.entity_type, &e.name, attrs.as_deref())
-                .map_err(|e| e.to_string())?,
-        };
-        link_memory_entity(conn, memory_id, entity_id).map_err(|e| e.to_string())?;
-        name_to_id.insert(e.name.clone(), entity_id);
-    }
-    for alias_info in &aliases {
-        let primary_id = name_to_id.get(&alias_info.primary);
-        let alias_id = name_to_id.get(&alias_info.alias);
-        match (primary_id, alias_id) {
-            (Some(&pid), Some(&aid)) if pid != aid => {
-                merge_entities(conn, aid, pid).map_err(|e| e.to_string())?;
-                name_to_id.insert(alias_info.alias.clone(), pid);
-            }
-            (Some(&pid), None) => {
-                add_entity_alias(conn, pid, &alias_info.alias).map_err(|e| e.to_string())?;
-            }
-            _ => {}
+        let tags_str = tags.as_ref().map(|t| t.join(","));
+        let memory_id = insert_memory(conn, &content, Some(&path_str), tags_str.as_deref())
+            .map_err(|e| e.to_string())?;
+
+        let mut name_to_id: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+        for e in &entities {
+            let attrs = e.attributes.as_ref().map(|a| a.to_string());
+            let entity_id = match find_entity_id_by_name_or_alias(conn, &e.name).map_err(|e| e.to_string())? {
+                Some(id) => id,
+                None => upsert_entity(conn, &e.entity_type, &e.name, attrs.as_deref())
+                    .map_err(|e| e.to_string())?,
+            };
+            link_memory_entity(conn, memory_id, entity_id).map_err(|e| e.to_string())?;
+            name_to_id.insert(e.name.clone(), entity_id);
         }
-    }
-    for r in &relations {
-        if let (Some(&from_id), Some(&to_id)) = (name_to_id.get(&r.from), name_to_id.get(&r.to)) {
-            let _ = upsert_relation(conn, from_id, to_id, &r.relation);
+        for alias_info in &aliases {
+            let primary_id = name_to_id.get(&alias_info.primary);
+            let alias_id = name_to_id.get(&alias_info.alias);
+            match (primary_id, alias_id) {
+                (Some(&pid), Some(&aid)) if pid != aid => {
+                    merge_entities(conn, aid, pid).map_err(|e| e.to_string())?;
+                    name_to_id.insert(alias_info.alias.clone(), pid);
+                }
+                (Some(&pid), None) => {
+                    add_entity_alias(conn, pid, &alias_info.alias).map_err(|e| e.to_string())?;
+                }
+                _ => {}
+            }
         }
-    }
+        for r in &relations {
+            if let (Some(&from_id), Some(&to_id)) = (name_to_id.get(&r.from), name_to_id.get(&r.to)) {
+                let _ = upsert_relation(conn, from_id, to_id, &r.relation);
+            }
+        }
+
+        get_memory_by_id(conn, memory_id).map_err(|e| e.to_string())?
+    };
 
     emit_save_progress(&app, "saveProgress.done", "done", serde_json::json!({}));
     println!("✅ Memory saved successfully!");
-    get_memory_by_id(conn, memory_id).map_err(|e| e.to_string())
+    Ok(saved_memory)
 }
 
 #[tauri::command]
@@ -1306,27 +1314,22 @@ fn do_update_memory(
         None
     };
 
-    let db = app.state::<DbState>();
-    let mut guard = db.0.lock().map_err(|e: std::sync::PoisonError<_>| e.to_string())?;
-    let conn = guard.as_mut().ok_or("database not initialized")?;
-
     // Step 2: Fetch related historical memories for knowledge fusion
     emit_save_progress(&app, "saveProgress.step2.lookingUp", "running", serde_json::json!({}));
     let historical_memories = if let Some(ref ex) = quick_extracted {
-        let mut all_memories = Vec::new();
-        for entity in &ex.entities {
-            if let Ok(Some(existing_entity)) = get_entity_by_name(conn, &entity.name) {
-                if let Ok(memories) = get_memories_for_entity(conn, existing_entity.id) {
-                    for mem in memories.into_iter().take(5) {
-                        if mem.id != memory_id && !all_memories.contains(&mem.content) {
-                            all_memories.push(mem.content);
-                        }
-                    }
-                }
-            }
+        let selected = {
+            let db = app.state::<DbState>();
+            let mut guard =
+                db.0.lock().map_err(|e: std::sync::PoisonError<_>| e.to_string())?;
+            let conn = guard.as_mut().ok_or("database not initialized")?;
+            collect_relevant_historical_memories(conn, ex, &content, Some(memory_id))?
+        };
+        if selected.is_empty() {
+            emit_save_progress(&app, "saveProgress.step2.noHistory", "success", serde_json::json!({}));
+        } else {
+            emit_save_progress(&app, "saveProgress.step2.found", "success", serde_json::json!({ "count": selected.len() }));
         }
-        emit_save_progress(&app, "saveProgress.step2.found", "success", serde_json::json!({ "count": all_memories.len() }));
-        all_memories
+        selected
     } else {
         emit_save_progress(&app, "saveProgress.step2.noHistory", "success", serde_json::json!({}));
         Vec::new()
@@ -1362,48 +1365,54 @@ fn do_update_memory(
 
     // Step 4: Persist to database
     emit_save_progress(&app, "saveProgress.step4.saving", "running", serde_json::json!({}));
-    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let updated_memory = {
+        let db = app.state::<DbState>();
+        let mut guard = db.0.lock().map_err(|e: std::sync::PoisonError<_>| e.to_string())?;
+        let conn = guard.as_mut().ok_or("database not initialized")?;
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
 
-    update_memory(&tx, memory_id, &content, tags_str.as_deref()).map_err(|e| e.to_string())?;
-    clear_memory_entities(&tx, memory_id).map_err(|e| e.to_string())?;
+        update_memory(&tx, memory_id, &content, tags_str.as_deref()).map_err(|e| e.to_string())?;
+        clear_memory_entities(&tx, memory_id).map_err(|e| e.to_string())?;
 
-    let mut name_to_id: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
-    for e in &entities {
-        let attrs = e.attributes.as_ref().map(|a| a.to_string());
-        let entity_id = match find_entity_id_by_name_or_alias(&tx, &e.name).map_err(|e| e.to_string())? {
-            Some(id) => id,
-            None => upsert_entity(&tx, &e.entity_type, &e.name, attrs.as_deref())
-                .map_err(|e| e.to_string())?,
-        };
-        link_memory_entity(&tx, memory_id, entity_id).map_err(|e| e.to_string())?;
-        name_to_id.insert(e.name.clone(), entity_id);
-    }
-    for alias_info in &aliases {
-        let primary_id = name_to_id.get(&alias_info.primary);
-        let alias_id = name_to_id.get(&alias_info.alias);
-        match (primary_id, alias_id) {
-            (Some(&pid), Some(&aid)) if pid != aid => {
-                merge_entities(&tx, aid, pid).map_err(|e| e.to_string())?;
-                name_to_id.insert(alias_info.alias.clone(), pid);
-            }
-            (Some(&pid), None) => {
-                add_entity_alias(&tx, pid, &alias_info.alias).map_err(|e| e.to_string())?;
-            }
-            _ => {}
+        let mut name_to_id: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+        for e in &entities {
+            let attrs = e.attributes.as_ref().map(|a| a.to_string());
+            let entity_id = match find_entity_id_by_name_or_alias(&tx, &e.name).map_err(|e| e.to_string())? {
+                Some(id) => id,
+                None => upsert_entity(&tx, &e.entity_type, &e.name, attrs.as_deref())
+                    .map_err(|e| e.to_string())?,
+            };
+            link_memory_entity(&tx, memory_id, entity_id).map_err(|e| e.to_string())?;
+            name_to_id.insert(e.name.clone(), entity_id);
         }
-    }
-    for r in &relations {
-        if let (Some(&from_id), Some(&to_id)) = (name_to_id.get(&r.from), name_to_id.get(&r.to)) {
-            let _ = upsert_relation(&tx, from_id, to_id, &r.relation);
+        for alias_info in &aliases {
+            let primary_id = name_to_id.get(&alias_info.primary);
+            let alias_id = name_to_id.get(&alias_info.alias);
+            match (primary_id, alias_id) {
+                (Some(&pid), Some(&aid)) if pid != aid => {
+                    merge_entities(&tx, aid, pid).map_err(|e| e.to_string())?;
+                    name_to_id.insert(alias_info.alias.clone(), pid);
+                }
+                (Some(&pid), None) => {
+                    add_entity_alias(&tx, pid, &alias_info.alias).map_err(|e| e.to_string())?;
+                }
+                _ => {}
+            }
         }
-    }
+        for r in &relations {
+            if let (Some(&from_id), Some(&to_id)) = (name_to_id.get(&r.from), name_to_id.get(&r.to)) {
+                let _ = upsert_relation(&tx, from_id, to_id, &r.relation);
+            }
+        }
 
-    prune_orphan_entities_and_relations(&tx).map_err(|e| e.to_string())?;
-    tx.commit().map_err(|e| e.to_string())?;
+        prune_orphan_entities_and_relations(&tx).map_err(|e| e.to_string())?;
+        tx.commit().map_err(|e| e.to_string())?;
+        get_memory_by_id(conn, memory_id).map_err(|e| e.to_string())?
+    };
 
     emit_save_progress(&app, "saveProgress.updateDone", "done", serde_json::json!({}));
     println!("✅ Memory updated successfully!");
-    get_memory_by_id(conn, memory_id).map_err(|e| e.to_string())
+    Ok(updated_memory)
 }
 
 #[tauri::command]
@@ -1474,6 +1483,204 @@ const OLLAMA_URL: &str = "http://localhost:11434";
 const OLLAMA_MODEL: &str = "qwen2.5:7b";
 /// Model used for entity extraction (person / time / location / event).
 const OLLAMA_MODEL_EXTRACT: &str = "qwen2.5:7b";
+
+/// Lightweight RAG parameters for memory fusion.
+const RAG_CANDIDATES_PER_ENTITY: usize = 8;
+const RAG_TOP_K: usize = 6;
+const RAG_MAX_CONTEXT_CHARS: usize = 2800;
+const RAG_MAX_MEMORY_CHARS: usize = 520;
+const RAG_MIN_RELEVANCE_SCORE: f32 = 0.12;
+
+fn is_cjk_char(ch: char) -> bool {
+    matches!(
+        ch as u32,
+        0x3400..=0x4DBF
+            | 0x4E00..=0x9FFF
+            | 0xF900..=0xFAFF
+            | 0x3040..=0x30FF
+            | 0xAC00..=0xD7AF
+    )
+}
+
+fn tokenize_for_rag(text: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut latin_run = String::new();
+    let mut cjk_run: Vec<char> = Vec::new();
+
+    let flush_latin = |run: &mut String, out: &mut Vec<String>| {
+        if run.len() >= 2 {
+            out.push(run.clone());
+        }
+        run.clear();
+    };
+
+    let flush_cjk = |run: &mut Vec<char>, out: &mut Vec<String>| {
+        if run.is_empty() {
+            return;
+        }
+        if run.len() == 1 {
+            out.push(run[0].to_string());
+            run.clear();
+            return;
+        }
+        for window in run.windows(2) {
+            out.push(window.iter().collect::<String>());
+        }
+        run.clear();
+    };
+
+    for raw in text.chars() {
+        let ch = raw.to_ascii_lowercase();
+        if ch.is_ascii_alphanumeric() {
+            if !cjk_run.is_empty() {
+                flush_cjk(&mut cjk_run, &mut tokens);
+            }
+            latin_run.push(ch);
+            continue;
+        }
+        if is_cjk_char(raw) {
+            if !latin_run.is_empty() {
+                flush_latin(&mut latin_run, &mut tokens);
+            }
+            cjk_run.push(raw);
+            continue;
+        }
+        if !latin_run.is_empty() {
+            flush_latin(&mut latin_run, &mut tokens);
+        }
+        if !cjk_run.is_empty() {
+            flush_cjk(&mut cjk_run, &mut tokens);
+        }
+    }
+
+    if !latin_run.is_empty() {
+        flush_latin(&mut latin_run, &mut tokens);
+    }
+    if !cjk_run.is_empty() {
+        flush_cjk(&mut cjk_run, &mut tokens);
+    }
+
+    tokens
+}
+
+fn memory_relevance_score(
+    query_tokens: &std::collections::HashSet<String>,
+    entity_terms: &[String],
+    candidate_content: &str,
+    seed_hits: usize,
+) -> (f32, usize, usize) {
+    let candidate_tokens: std::collections::HashSet<String> =
+        tokenize_for_rag(candidate_content).into_iter().collect();
+    let token_overlap = if query_tokens.is_empty() {
+        0
+    } else {
+        query_tokens.intersection(&candidate_tokens).count()
+    };
+    let overlap_ratio = if query_tokens.is_empty() {
+        0.0
+    } else {
+        token_overlap as f32 / query_tokens.len() as f32
+    };
+
+    let candidate_lc = candidate_content.to_lowercase();
+    let entity_hits = entity_terms
+        .iter()
+        .filter(|term| candidate_lc.contains(term.as_str()))
+        .count();
+    let entity_ratio = if entity_terms.is_empty() {
+        0.0
+    } else {
+        entity_hits as f32 / entity_terms.len() as f32
+    };
+    let seed_ratio = (seed_hits.min(3) as f32) / 3.0;
+
+    let score = overlap_ratio * 0.65 + entity_ratio * 0.25 + seed_ratio * 0.10;
+    (score, token_overlap, entity_hits)
+}
+
+fn collect_relevant_historical_memories(
+    conn: &rusqlite::Connection,
+    extracted: &ExtractedData,
+    new_content: &str,
+    exclude_memory_id: Option<i64>,
+) -> Result<Vec<String>, String> {
+    let mut candidate_map: std::collections::HashMap<i64, (String, usize)> =
+        std::collections::HashMap::new();
+    for entity in &extracted.entities {
+        if let Some(existing_entity) =
+            get_entity_by_name(conn, &entity.name).map_err(|e| e.to_string())?
+        {
+            let memories =
+                get_memories_for_entity(conn, existing_entity.id).map_err(|e| e.to_string())?;
+            for mem in memories.into_iter().take(RAG_CANDIDATES_PER_ENTITY) {
+                if exclude_memory_id == Some(mem.id) {
+                    continue;
+                }
+                let entry = candidate_map
+                    .entry(mem.id)
+                    .or_insert_with(|| (mem.content, 0));
+                entry.1 += 1;
+            }
+        }
+    }
+
+    if candidate_map.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let query_tokens: std::collections::HashSet<String> =
+        tokenize_for_rag(new_content).into_iter().collect();
+    let entity_terms: Vec<String> = extracted
+        .entities
+        .iter()
+        .map(|e| e.name.trim().to_lowercase())
+        .filter(|s| !s.is_empty() && s.chars().count() >= 2)
+        .collect();
+
+    let mut scored: Vec<(f32, usize, usize, String)> = candidate_map
+        .into_iter()
+        .map(|(_, (content, seed_hits))| {
+            let (score, token_overlap, entity_hits) =
+                memory_relevance_score(&query_tokens, &entity_terms, &content, seed_hits);
+            (score, token_overlap, entity_hits, content)
+        })
+        .collect();
+
+    scored.sort_by(|a, b| b.0.total_cmp(&a.0));
+
+    let mut selected = Vec::new();
+    let mut budget_left = RAG_MAX_CONTEXT_CHARS;
+
+    for (score, token_overlap, entity_hits, content) in scored.into_iter().take(RAG_TOP_K) {
+        let is_relevant =
+            score >= RAG_MIN_RELEVANCE_SCORE || entity_hits > 0 || token_overlap >= 2;
+        if !is_relevant {
+            continue;
+        }
+        if budget_left == 0 {
+            break;
+        }
+
+        let trimmed = content.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let allow = budget_left.min(RAG_MAX_MEMORY_CHARS);
+        let snippet = if trimmed.chars().count() > allow {
+            truncate_for_prompt(trimmed, allow)
+        } else {
+            trimmed.to_string()
+        };
+        let used = snippet.chars().count();
+        if used == 0 {
+            continue;
+        }
+        selected.push(snippet);
+        budget_left = budget_left.saturating_sub(used);
+    }
+
+    Ok(selected)
+}
 
 /// Entity-aware memory retrieval and intelligent Q&A.
 fn do_answer_question(

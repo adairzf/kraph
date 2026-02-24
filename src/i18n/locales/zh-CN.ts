@@ -132,6 +132,7 @@ export default {
     all: '全部',
     empty: '暂无图谱数据',
     emptyByFilter: '当前筛选下暂无可显示节点',
+    busyTip: '正在处理记忆，请稍后再查看节点详情',
     types: {
       Person: '人物',
       Location: '地点',

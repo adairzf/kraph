@@ -132,6 +132,7 @@ export default {
     all: 'All',
     empty: 'No graph data',
     emptyByFilter: 'No nodes match the selected filters',
+    busyTip: 'Memory processing in progress. Please try node details again shortly.',
     types: {
       Person: 'Person',
       Location: 'Location',

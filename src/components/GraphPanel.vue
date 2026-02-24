@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useGraphStore } from '../stores/graphStore'
+import { useMemoryStore } from '../stores/memoryStore'
 import VChart from 'vue-echarts'
+import { ElMessage } from 'element-plus'
 import { use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
 import { GraphChart } from 'echarts/charts'
@@ -22,6 +24,7 @@ use([
 ])
 
 const graphStore = useGraphStore()
+const memoryStore = useMemoryStore()
 const { t } = useI18n()
 const themeRefreshTick = ref(0)
 const chartRef = ref<InstanceType<typeof VChart> | null>(null)
@@ -30,6 +33,7 @@ const typesInitialized = ref(false)
 const pendingCenterNodeId = ref<string | null>(null)
 const backgroundClickDisposer = ref<(() => void) | null>(null)
 const backgroundClickBoundChart = ref<EChartsType | null>(null)
+const lastBusyTipAt = ref(0)
 const GRAPH_VISIBLE_TYPES_KEY = 'graph-visible-types'
 
 const nodeColors: Record<string, string> = {
@@ -498,6 +502,14 @@ const chartOption = computed(() => {
 function onChartClick(params: unknown) {
   const p = params as { dataType?: string; data?: { id?: string } }
   if (p.dataType === 'node' && p.data?.id) {
+    if (memoryStore.loading) {
+      const now = Date.now()
+      if (now - lastBusyTipAt.value > 1500) {
+        ElMessage.info(t('graphPanel.busyTip'))
+        lastBusyTipAt.value = now
+      }
+      return
+    }
     const id = parseInt(p.data.id, 10)
     if (!Number.isNaN(id)) graphStore.setSelectedEntity(id)
   }
