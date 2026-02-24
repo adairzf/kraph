@@ -1,0 +1,9 @@
+{
+  "id": "example-external-plugin",
+  "name": "Example External Plugin",
+  "version": "0.1.0",
+  "tab_key": "plugin.example.tab",
+  "menu_key": "plugin.example.menu",
+  "description": "An example plugin entry for custom graph-powered capability.",
+  "entry": "./src/index.html"
+}

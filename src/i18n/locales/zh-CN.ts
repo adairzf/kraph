@@ -2,10 +2,15 @@ export default {
   app: {
     title: '记忆 · 知识图谱',
     langSwitch: 'EN',
+    theme: {
+      switchToLight: '切换浅色主题',
+      switchToDark: '切换深色主题',
+    },
     tabs: {
       qa: '问答',
       story: '小说生成',
       edit: '编辑',
+      plugins: '插件',
       settings: '设置',
     },
     header: {
@@ -34,6 +39,11 @@ export default {
     errors: {
       cleanupFailed: '清理失败: ',
       clearAllFailed: '清空失败: ',
+    },
+    plugins: {
+      title: '插件',
+      storyGenerator: '小说生成',
+      storyGeneratorDesc: '通过关键事件自动生成大纲、章节与正文，并支持续写与章节重写。',
     },
     library: {
       label: '记忆库',
@@ -110,6 +120,19 @@ export default {
       cancel: '忽略',
     },
   },
+  graphPanel: {
+    filter: '筛选',
+    all: '全部',
+    empty: '暂无图谱数据',
+    emptyByFilter: '当前筛选下暂无可显示节点',
+    types: {
+      Person: '人物',
+      Location: '地点',
+      Event: '事件',
+      Time: '时间',
+      Organization: '组织',
+    },
+  },
   storyGenerator: {
     title: '关键事件生成小说',
     hint: '每行输入一个关键事件，系统会自动补全大纲、章节计划和第一章正文。',
@@ -147,6 +170,35 @@ export default {
     continuityChecks: '一致性检查点',
     writtenChapters: '已生成正文',
     firstChapter: '第一章正文',
+  },
+  pluginSettings: {
+    title: '插件设置',
+    hint: '统一管理内置/外部插件，外部插件可直接通过本地路径安装。',
+    sourceBuiltin: '内置插件',
+    sourceExternal: '外部插件',
+    installTitle: '安装外部插件',
+    installHint: '输入插件目录路径（目录内需包含 plugin.manifest.json）。',
+    installPathPlaceholder: '例如：/Users/you/dev/my-plugin',
+    installBtn: '安装',
+    installSuccess: '插件安装成功',
+    installFailed: '插件安装失败: ',
+    loadFailed: '加载插件列表失败: ',
+    uninstallBtn: '卸载',
+    uninstallSuccess: '插件已卸载',
+    uninstallFailed: '插件卸载失败: ',
+    uninstallConfirmTitle: '卸载插件',
+    uninstallConfirmMessage: '确认卸载插件「{name}」？',
+    uninstallConfirm: '确认卸载',
+    uninstallCancel: '取消',
+    pluginsFolder: '插件目录',
+    openFolderBtn: '打开目录',
+    openFolderFailed: '打开插件目录失败: ',
+    noExternalYet: '当前还没有安装外部插件。',
+    installPath: '安装路径',
+    entryFile: '入口文件',
+    noUiEntry: '该插件未提供可渲染的 HTML 入口，当前仅展示基础信息。',
+    templateTitle: '外部插件模板',
+    templateHint: '可直接基于以下模板目录创建插件，降低与主应用耦合。',
   },
   editorPanel: {
     edit: '编辑',

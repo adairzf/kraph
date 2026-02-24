@@ -2,10 +2,15 @@ export default {
   app: {
     title: 'Memory · Knowledge Graph',
     langSwitch: '中文',
+    theme: {
+      switchToLight: 'Switch to Light Theme',
+      switchToDark: 'Switch to Dark Theme',
+    },
     tabs: {
       qa: 'Q&A',
       story: 'Story',
       edit: 'Edit',
+      plugins: 'Plugins',
       settings: 'Settings',
     },
     header: {
@@ -34,6 +39,11 @@ export default {
     errors: {
       cleanupFailed: 'Cleanup failed: ',
       clearAllFailed: 'Clear failed: ',
+    },
+    plugins: {
+      title: 'Plugins',
+      storyGenerator: 'Story Generator',
+      storyGeneratorDesc: 'Generate outline, chapters, and draft text from key events, with continuation and chapter rewrite.',
     },
     library: {
       label: 'Library',
@@ -110,6 +120,19 @@ export default {
       cancel: 'Ignore',
     },
   },
+  graphPanel: {
+    filter: 'Filter',
+    all: 'All',
+    empty: 'No graph data',
+    emptyByFilter: 'No nodes match the selected filters',
+    types: {
+      Person: 'Person',
+      Location: 'Location',
+      Event: 'Event',
+      Time: 'Time',
+      Organization: 'Organization',
+    },
+  },
   storyGenerator: {
     title: 'Generate Story from Key Events',
     hint: 'Enter one key event per line. The app will generate an outline, chapter plan, and Chapter 1 draft.',
@@ -147,6 +170,35 @@ export default {
     continuityChecks: 'Continuity Checks',
     writtenChapters: 'Generated Chapters',
     firstChapter: 'Chapter 1 Draft',
+  },
+  pluginSettings: {
+    title: 'Plugin Settings',
+    hint: 'Manage built-in and external plugins in one place. External plugins can be installed from local paths.',
+    sourceBuiltin: 'Built-in',
+    sourceExternal: 'External',
+    installTitle: 'Install External Plugin',
+    installHint: 'Enter a plugin directory path (must include plugin.manifest.json).',
+    installPathPlaceholder: 'For example: /Users/you/dev/my-plugin',
+    installBtn: 'Install',
+    installSuccess: 'Plugin installed',
+    installFailed: 'Failed to install plugin: ',
+    loadFailed: 'Failed to load plugin list: ',
+    uninstallBtn: 'Uninstall',
+    uninstallSuccess: 'Plugin uninstalled',
+    uninstallFailed: 'Failed to uninstall plugin: ',
+    uninstallConfirmTitle: 'Uninstall Plugin',
+    uninstallConfirmMessage: 'Uninstall plugin "{name}"?',
+    uninstallConfirm: 'Uninstall',
+    uninstallCancel: 'Cancel',
+    pluginsFolder: 'Plugins Folder',
+    openFolderBtn: 'Open Folder',
+    openFolderFailed: 'Failed to open plugins folder: ',
+    noExternalYet: 'No external plugins installed yet.',
+    installPath: 'Install path',
+    entryFile: 'Entry file',
+    noUiEntry: 'This plugin has no renderable HTML entry. Metadata only in current MVP.',
+    templateTitle: 'External Plugin Template',
+    templateHint: 'Start from the template files below to reduce coupling with the core app.',
   },
   editorPanel: {
     edit: 'Edit',

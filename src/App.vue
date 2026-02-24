@@ -6,13 +6,15 @@ import EditorPanel from './components/EditorPanel.vue'
 import GraphPanel from './components/GraphPanel.vue'
 import CharacterCard from './components/CharacterCard.vue'
 import SearchPanel from './components/SearchPanel.vue'
-import StoryGeneratorPanel from './components/StoryGeneratorPanel.vue'
+import PluginSettingsPanel from './components/PluginSettingsPanel.vue'
 import ModelSettings from './components/ModelSettings.vue'
 import ModelIndicator from './components/ModelIndicator.vue'
 import OllamaSetupDialog from './components/OllamaSetupDialog.vue'
+import type { PluginManifest } from './plugins/types'
 import { useGraphStore } from './stores/graphStore'
 import { useMemoryStore } from './stores/memoryStore'
 import { useOllamaStore } from './stores/ollamaStore'
+import { usePluginStore } from './stores/pluginStore'
 import {
   checkOllama,
   getModelConfig,
@@ -37,11 +39,46 @@ function toggleLocale() {
   localStorage.setItem('app-locale', next)
 }
 
+type ThemeMode = 'dark' | 'light'
+const THEME_STORAGE_KEY = 'app-theme'
+const themeMode = ref<ThemeMode>('dark')
+
+function applyTheme(theme: ThemeMode) {
+  const root = document.documentElement
+  root.classList.toggle('dark', theme === 'dark')
+  root.classList.toggle('light', theme === 'light')
+  themeMode.value = theme
+  localStorage.setItem(THEME_STORAGE_KEY, theme)
+  window.dispatchEvent(new CustomEvent('app-theme-changed', { detail: { theme } }))
+}
+
+function initTheme() {
+  const saved = localStorage.getItem(THEME_STORAGE_KEY)
+  if (saved === 'light' || saved === 'dark') {
+    applyTheme(saved)
+    return
+  }
+  applyTheme('dark')
+}
+
+function toggleTheme() {
+  applyTheme(themeMode.value === 'dark' ? 'light' : 'dark')
+}
+
+const themeToggleLabel = computed(() =>
+  themeMode.value === 'dark' ? t('app.theme.switchToLight') : t('app.theme.switchToDark'),
+)
+
+if (typeof window !== 'undefined') {
+  initTheme()
+}
+
 const editorContent = ref('')
-const rightView = ref<'entity' | 'qa' | 'story' | 'edit' | 'settings'>('entity')
+const rightView = ref<string>('entity')
 const graphStore = useGraphStore()
 const memoryStore = useMemoryStore()
 const ollamaStore = useOllamaStore()
+const pluginStore = usePluginStore()
 const searchName = ref('')
 const leftSidebarCollapsed = ref(false)
 const menuOpen = ref(false)
@@ -71,6 +108,7 @@ const currentLibrary = computed(() =>
   libraries.value.find((x) => x.id === currentLibraryId.value) ?? null,
 )
 const canDeleteLibrary = computed(() => libraries.value.length > 1 && !!currentLibrary.value)
+const enabledPlugins = computed(() => pluginStore.enabledPlugins)
 
 async function refreshModelStatus() {
   const config = await getModelConfig()
@@ -87,6 +125,7 @@ onMounted(async () => {
   try {
     await refreshLibraries()
     await refreshModelStatus()
+    await pluginStore.load()
   } catch {
     // Ignore startup check errors silently
   } finally {
@@ -163,8 +202,35 @@ watch(
   },
 )
 
+watch(
+  () => pluginStore.enabledPluginIds,
+  (ids: string[]) => {
+  const coreViews = ['entity', 'qa', 'edit', 'plugins', 'settings']
+  if (!coreViews.includes(rightView.value) && !ids.includes(rightView.value)) {
+    rightView.value = 'qa'
+  }
+  },
+)
+
+watch(
+  () => graphStore.selectedEntityId,
+  (entityId) => {
+    if (entityId != null) {
+      rightView.value = 'entity'
+    }
+  },
+)
+
 function openSetupDialog() {
   setupDialogRef.value?.open()
+}
+
+function pluginTabLabel(plugin: PluginManifest): string {
+  if (plugin.tabKey) {
+    const translated = t(plugin.tabKey)
+    if (translated !== plugin.tabKey) return translated
+  }
+  return plugin.displayName || plugin.id
 }
 
 function onSearchEntity() {
@@ -437,6 +503,10 @@ async function onClearAllData() {
               <span class="menu-icon">🌐</span>
               {{ t('app.langSwitch') }}
             </button>
+            <button class="menu-item" @click="toggleTheme">
+              <span class="menu-icon">{{ themeMode === 'dark' ? '☀️' : '🌙' }}</span>
+              {{ themeToggleLabel }}
+            </button>
             <button class="menu-item" @click="onOpenMemoriesFolder">
               <span class="menu-icon">📂</span>
               {{ t('app.header.openMemoriesFolder') }}
@@ -508,11 +578,20 @@ async function onClearAllData() {
           <button class="rtab" :class="{ active: rightView === 'qa' }" @click="rightView = 'qa'">
             {{ t('app.tabs.qa') }}
           </button>
-          <button class="rtab" :class="{ active: rightView === 'story' }" @click="rightView = 'story'">
-            {{ t('app.tabs.story') }}
+          <button
+            v-for="plugin in enabledPlugins"
+            :key="`tab-${plugin.id}`"
+            class="rtab"
+            :class="{ active: rightView === plugin.id }"
+            @click="rightView = plugin.id"
+          >
+            {{ pluginTabLabel(plugin) }}
           </button>
           <button class="rtab" :class="{ active: rightView === 'edit' }" @click="rightView = 'edit'">
             {{ t('app.tabs.edit') }}
+          </button>
+          <button class="rtab" :class="{ active: rightView === 'plugins' }" @click="rightView = 'plugins'">
+            {{ t('app.tabs.plugins') }}
           </button>
           <button class="rtab" :class="{ active: rightView === 'settings' }" @click="rightView = 'settings'">
             {{ t('app.tabs.settings') }}
@@ -526,8 +605,15 @@ async function onClearAllData() {
             :entity-name="graphStore.searchEntityName"
           />
           <SearchPanel v-show="rightView === 'qa'" />
-          <StoryGeneratorPanel v-show="rightView === 'story'" :key="`story-${currentLibraryId}`" />
+          <component
+            :is="plugin.component"
+            v-for="plugin in enabledPlugins"
+            :key="`${plugin.id}-${currentLibraryId}`"
+            v-show="rightView === plugin.id"
+            v-bind="plugin.componentProps"
+          />
           <EditorPanel v-show="rightView === 'edit'" />
+          <PluginSettingsPanel v-show="rightView === 'plugins'" />
           <ModelSettings v-show="rightView === 'settings'" />
         </div>
       </aside>
@@ -566,6 +652,46 @@ async function onClearAllData() {
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+html.light {
+  color-scheme: light;
+  --bg: #f4f7fb;
+  --bg2: #ffffff;
+  --bg3: #ffffff;
+  --bg4: #eef3fa;
+  --border: rgba(15, 23, 42, 0.12);
+  --border-hover: rgba(15, 23, 42, 0.22);
+  --text: #0f172a;
+  --text-muted: #334155;
+  --text-dim: #64748b;
+  --accent: #2563eb;
+  --accent-2: #0284c7;
+  --accent-glow: rgba(37, 99, 235, 0.2);
+  --cyan: #0891b2;
+  --green: #059669;
+  --red: #dc2626;
+  --orange: #d97706;
+  --grad: linear-gradient(135deg, #2563eb, #0284c7);
+
+  --el-bg-color: var(--bg3);
+  --el-bg-color-page: var(--bg);
+  --el-bg-color-overlay: var(--bg3);
+  --el-text-color-primary: var(--text);
+  --el-text-color-regular: var(--text-muted);
+  --el-text-color-secondary: var(--text-dim);
+  --el-border-color: var(--border);
+  --el-border-color-light: rgba(15, 23, 42, 0.08);
+  --el-border-color-lighter: rgba(15, 23, 42, 0.06);
+  --el-fill-color-blank: var(--bg3);
+  --el-fill-color: var(--bg4);
+  --el-fill-color-light: var(--bg4);
+  --el-fill-color-lighter: var(--bg4);
+  --el-color-primary: var(--accent);
+}
+
+html.dark {
+  color-scheme: dark;
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html, body, #app { height: 100%; }
@@ -898,6 +1024,13 @@ html.dark .el-overlay { background: rgba(0,0,0,0.6) !important; }
 .menu-item.danger:hover { background: rgba(248, 113, 113, 0.1); color: var(--red); }
 .menu-icon { font-size: 14px; }
 .menu-divider { height: 1px; background: var(--border); margin: 4px 0; }
+.menu-section-title {
+  margin: 6px 8px 4px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+}
 
 /* ─── MAIN LAYOUT ─── */
 .main {
@@ -1067,4 +1200,27 @@ html.dark .el-overlay { background: rgba(0,0,0,0.6) !important; }
 .right-content::-webkit-scrollbar { width: 3px; }
 .right-content::-webkit-scrollbar-track { background: transparent; }
 .right-content::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+:global(html.light) .library-switch {
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.02), rgba(15, 23, 42, 0.01));
+}
+:global(html.light) .library-el-select :deep(.el-select__wrapper) {
+  background: var(--bg4) !important;
+  box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.12) inset !important;
+}
+:global(html.light) .btn-library-action {
+  background: rgba(15, 23, 42, 0.02);
+}
+:global(html.light) .dropdown-menu {
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.14);
+}
+:global(html.light) .btn-search {
+  border-color: rgba(37, 99, 235, 0.35);
+  background: rgba(37, 99, 235, 0.08);
+  color: #1d4ed8;
+}
+:global(html.light) .btn-search:hover {
+  background: rgba(37, 99, 235, 0.14);
+  border-color: rgba(37, 99, 235, 0.55);
+}
 </style>

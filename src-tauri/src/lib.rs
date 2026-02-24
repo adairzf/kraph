@@ -94,6 +94,40 @@ struct LibraryMeta {
     created_at: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ExternalPluginManifestFile {
+    id: String,
+    name: String,
+    #[serde(default)]
+    version: Option<String>,
+    #[serde(default)]
+    tab_key: Option<String>,
+    #[serde(default)]
+    menu_key: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    entry: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ExternalPluginInfo {
+    id: String,
+    name: String,
+    version: String,
+    #[serde(default)]
+    tab_key: Option<String>,
+    #[serde(default)]
+    menu_key: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    entry: Option<String>,
+    #[serde(default)]
+    entry_path: Option<String>,
+    install_path: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct StoryWrittenChapter {
     chapter: usize,
@@ -249,6 +283,14 @@ fn story_project_file_path(data_dir: &Path, project_id: &str) -> PathBuf {
     story_projects_root(data_dir).join(format!("{project_id}.json"))
 }
 
+fn plugins_root(app_root: &Path) -> PathBuf {
+    app_root.join("plugins")
+}
+
+fn plugin_manifest_path(plugin_dir: &Path) -> PathBuf {
+    plugin_dir.join("plugin.manifest.json")
+}
+
 fn normalize_library_id(name: &str) -> String {
     let mut id = String::new();
     let mut last_dash = false;
@@ -291,6 +333,115 @@ fn normalize_story_project_id(name: &str) -> String {
     } else {
         id
     }
+}
+
+fn normalize_plugin_id(id: &str) -> String {
+    normalize_library_id(id)
+}
+
+fn validate_plugin_id(id: &str) -> Result<(), String> {
+    if id.trim().is_empty() {
+        return Err("Plugin id cannot be empty.".to_string());
+    }
+    let normalized = normalize_plugin_id(id);
+    if normalized != id {
+        return Err("Plugin id must use lowercase letters, numbers, and dashes only.".to_string());
+    }
+    Ok(())
+}
+
+fn read_external_plugin_manifest(plugin_dir: &Path) -> Result<ExternalPluginManifestFile, String> {
+    let path = plugin_manifest_path(plugin_dir);
+    let content = fs::read_to_string(&path)
+        .map_err(|e| format!("Failed to read plugin manifest {:?}: {}", path, e))?;
+    let mut manifest: ExternalPluginManifestFile = serde_json::from_str(&content)
+        .map_err(|e| format!("Failed to parse plugin manifest {:?}: {}", path, e))?;
+
+    manifest.id = manifest.id.trim().to_string();
+    manifest.name = manifest.name.trim().to_string();
+    manifest.version = manifest
+        .version
+        .as_ref()
+        .map(|x| x.trim().to_string())
+        .filter(|x| !x.is_empty());
+    manifest.tab_key = manifest
+        .tab_key
+        .as_ref()
+        .map(|x| x.trim().to_string())
+        .filter(|x| !x.is_empty());
+    manifest.menu_key = manifest
+        .menu_key
+        .as_ref()
+        .map(|x| x.trim().to_string())
+        .filter(|x| !x.is_empty());
+    manifest.description = manifest
+        .description
+        .as_ref()
+        .map(|x| x.trim().to_string())
+        .filter(|x| !x.is_empty());
+    manifest.entry = manifest
+        .entry
+        .as_ref()
+        .map(|x| x.trim().to_string())
+        .filter(|x| !x.is_empty());
+
+    if manifest.name.is_empty() {
+        return Err("Plugin manifest field 'name' cannot be empty.".to_string());
+    }
+    if let Some(entry) = manifest.entry.as_ref() {
+        let entry_path = Path::new(entry);
+        if entry_path.is_absolute()
+            || entry_path
+                .components()
+                .any(|c| matches!(c, std::path::Component::ParentDir))
+        {
+            return Err("Plugin manifest field 'entry' must be a relative path inside plugin directory.".to_string());
+        }
+    }
+    validate_plugin_id(&manifest.id)?;
+    Ok(manifest)
+}
+
+fn build_external_plugin_info(plugin_dir: &Path) -> Result<ExternalPluginInfo, String> {
+    let manifest = read_external_plugin_manifest(plugin_dir)?;
+    let entry_path = manifest
+        .entry
+        .as_ref()
+        .map(|entry| plugin_dir.join(entry))
+        .map(|path| path.to_string_lossy().to_string());
+    Ok(ExternalPluginInfo {
+        id: manifest.id,
+        name: manifest.name,
+        version: manifest.version.unwrap_or_else(|| "0.1.0".to_string()),
+        tab_key: manifest.tab_key,
+        menu_key: manifest.menu_key,
+        description: manifest.description,
+        entry: manifest.entry,
+        entry_path,
+        install_path: plugin_dir.to_string_lossy().to_string(),
+    })
+}
+
+fn copy_directory_recursive(src: &Path, dst: &Path) -> Result<(), String> {
+    if !src.exists() || !src.is_dir() {
+        return Err(format!("Source path is not a directory: {:?}", src));
+    }
+    fs::create_dir_all(dst).map_err(|e| format!("Failed to create directory {:?}: {}", dst, e))?;
+    for entry in fs::read_dir(src).map_err(|e| format!("Failed to read {:?}: {}", src, e))? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+        if src_path.is_dir() {
+            copy_directory_recursive(&src_path, &dst_path)?;
+        } else if src_path.is_file() {
+            if let Some(parent) = dst_path.parent() {
+                fs::create_dir_all(parent).map_err(|e| format!("Failed to create directory {:?}: {}", parent, e))?;
+            }
+            fs::copy(&src_path, &dst_path)
+                .map_err(|e| format!("Failed to copy {:?} -> {:?}: {}", src_path, dst_path, e))?;
+        }
+    }
+    Ok(())
 }
 
 fn unique_story_project_id(root: &Path, base_id: &str) -> String {
@@ -696,34 +847,121 @@ fn load_story_project(project_id: String, data_dir: State<AppDataDir>) -> Result
     Ok(project)
 }
 
-#[tauri::command]
-fn open_memories_folder(data_dir: State<AppDataDir>) -> Result<String, String> {
-    let data_dir = get_current_data_dir(&data_dir)?;
-    let memories_dir = data_dir.join("memories");
-    fs::create_dir_all(&memories_dir).map_err(|e| format!("Failed to create memories directory: {e}"))?;
-
+fn open_folder_in_os(path: &Path) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
         std::process::Command::new("open")
-            .arg(&memories_dir)
+            .arg(path)
             .spawn()
             .map_err(|e| format!("Failed to open folder: {e}"))?;
     }
     #[cfg(target_os = "windows")]
     {
         std::process::Command::new("explorer")
-            .arg(&memories_dir)
+            .arg(path)
             .spawn()
             .map_err(|e| format!("Failed to open folder: {e}"))?;
     }
     #[cfg(target_os = "linux")]
     {
         std::process::Command::new("xdg-open")
-            .arg(&memories_dir)
+            .arg(path)
             .spawn()
             .map_err(|e| format!("Failed to open folder: {e}"))?;
     }
+    Ok(())
+}
 
+#[tauri::command]
+fn list_external_plugins(app_root: State<AppRootDir>) -> Result<Vec<ExternalPluginInfo>, String> {
+    let root = plugins_root(&app_root.0);
+    fs::create_dir_all(&root).map_err(|e| format!("Failed to create plugins directory: {e}"))?;
+
+    let mut plugins = Vec::new();
+    for entry in fs::read_dir(&root).map_err(|e| format!("Failed to read plugins directory: {e}"))? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        if let Ok(info) = build_external_plugin_info(&path) {
+            plugins.push(info);
+        }
+    }
+    plugins.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    Ok(plugins)
+}
+
+#[tauri::command]
+fn get_plugins_folder_path(app_root: State<AppRootDir>) -> Result<String, String> {
+    let root = plugins_root(&app_root.0);
+    fs::create_dir_all(&root).map_err(|e| format!("Failed to create plugins directory: {e}"))?;
+    Ok(root.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+fn open_plugins_folder(app_root: State<AppRootDir>) -> Result<String, String> {
+    let root = plugins_root(&app_root.0);
+    fs::create_dir_all(&root).map_err(|e| format!("Failed to create plugins directory: {e}"))?;
+    open_folder_in_os(&root)?;
+    Ok(root.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+fn install_external_plugin(
+    source_path: String,
+    app_root: State<AppRootDir>,
+) -> Result<ExternalPluginInfo, String> {
+    let trimmed = source_path.trim();
+    if trimmed.is_empty() {
+        return Err("Plugin source path cannot be empty.".to_string());
+    }
+    let source_dir = PathBuf::from(trimmed);
+    if !source_dir.exists() || !source_dir.is_dir() {
+        return Err(format!("Plugin source directory does not exist: {}", trimmed));
+    }
+    let source_manifest = read_external_plugin_manifest(&source_dir)?;
+
+    let root = plugins_root(&app_root.0);
+    fs::create_dir_all(&root).map_err(|e| format!("Failed to create plugins directory: {e}"))?;
+
+    let source_canonical = fs::canonicalize(&source_dir)
+        .map_err(|e| format!("Failed to resolve source directory: {e}"))?;
+    let root_canonical = fs::canonicalize(&root)
+        .map_err(|e| format!("Failed to resolve plugins directory: {e}"))?;
+    if source_canonical.starts_with(&root_canonical) {
+        return Err("Source directory cannot be inside the managed plugins directory.".to_string());
+    }
+
+    let target_dir = root.join(&source_manifest.id);
+    if target_dir.exists() {
+        fs::remove_dir_all(&target_dir)
+            .map_err(|e| format!("Failed to remove existing plugin directory: {e}"))?;
+    }
+
+    copy_directory_recursive(&source_dir, &target_dir)?;
+    build_external_plugin_info(&target_dir)
+}
+
+#[tauri::command]
+fn uninstall_external_plugin(plugin_id: String, app_root: State<AppRootDir>) -> Result<String, String> {
+    let plugin_id = plugin_id.trim();
+    validate_plugin_id(plugin_id)?;
+    let root = plugins_root(&app_root.0);
+    let target_dir = root.join(plugin_id);
+    if !target_dir.exists() {
+        return Err(format!("Plugin '{}' is not installed.", plugin_id));
+    }
+    fs::remove_dir_all(&target_dir).map_err(|e| format!("Failed to uninstall plugin: {e}"))?;
+    Ok(plugin_id.to_string())
+}
+
+#[tauri::command]
+fn open_memories_folder(data_dir: State<AppDataDir>) -> Result<String, String> {
+    let data_dir = get_current_data_dir(&data_dir)?;
+    let memories_dir = data_dir.join("memories");
+    fs::create_dir_all(&memories_dir).map_err(|e| format!("Failed to create memories directory: {e}"))?;
+    open_folder_in_os(&memories_dir)?;
     Ok(memories_dir.to_string_lossy().to_string())
 }
 
@@ -2276,6 +2514,8 @@ pub fn run() {
 
             let libraries_root_dir = libraries_root(&app_data_dir);
             fs::create_dir_all(&libraries_root_dir).map_err(|e| e.to_string())?;
+            let plugins_root_dir = plugins_root(&app_data_dir);
+            fs::create_dir_all(&plugins_root_dir).map_err(|e| e.to_string())?;
 
             let default_library_id = "default".to_string();
             let default_library_dir = libraries_root_dir.join(&default_library_id);
@@ -2326,6 +2566,11 @@ pub fn run() {
             save_story_project,
             list_story_projects,
             load_story_project,
+            list_external_plugins,
+            get_plugins_folder_path,
+            open_plugins_folder,
+            install_external_plugin,
+            uninstall_external_plugin,
             open_memories_folder,
             get_memories_folder_path,
             list_memories_dir,

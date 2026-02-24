@@ -119,6 +119,18 @@ export interface StoryRewriteChapterRequest {
   language?: string
 }
 
+export interface ExternalPluginInfo {
+  id: string
+  name: string
+  version: string
+  tab_key?: string
+  menu_key?: string
+  description?: string
+  entry?: string
+  entry_path?: string
+  install_path: string
+}
+
 export async function listMemoriesDir(): Promise<string[]> {
   return invoke('list_memories_dir')
 }
@@ -272,6 +284,26 @@ export async function listStoryProjects(): Promise<StoryProjectSummary[]> {
 
 export async function loadStoryProject(projectId: string): Promise<StoryProjectData> {
   return invoke('load_story_project', { projectId })
+}
+
+export async function listExternalPlugins(): Promise<ExternalPluginInfo[]> {
+  return invoke('list_external_plugins')
+}
+
+export async function getPluginsFolderPath(): Promise<string> {
+  return invoke('get_plugins_folder_path')
+}
+
+export async function openPluginsFolder(): Promise<string> {
+  return invoke('open_plugins_folder')
+}
+
+export async function installExternalPlugin(sourcePath: string): Promise<ExternalPluginInfo> {
+  return invoke('install_external_plugin', { sourcePath })
+}
+
+export async function uninstallExternalPlugin(pluginId: string): Promise<string> {
+  return invoke('uninstall_external_plugin', { pluginId })
 }
 
 /** Download and open the Ollama installer (Win/Mac: download package; Linux: open download page). */
