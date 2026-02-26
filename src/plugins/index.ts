@@ -1,4 +1,5 @@
 import { storyGeneratorPlugin } from './builtin/storyGenerator'
+import { relationshipManagerPlugin } from './builtin/relationshipManager'
 import type { PluginManifest } from './types'
 
 const ENABLED_PLUGINS_KEY = 'enabled-plugin-ids'
@@ -6,6 +7,7 @@ const LEGACY_ENABLED_BUILTIN_PLUGINS_KEY = 'enabled-builtin-plugins'
 
 export const BUILTIN_PLUGINS: PluginManifest[] = [
   storyGeneratorPlugin,
+  relationshipManagerPlugin,
 ]
 
 export function loadStoredEnabledPluginIds(): string[] {

@@ -14,6 +14,7 @@ export interface MemoryLibraryInfo {
   name: string
   path: string
   is_current: boolean
+  enable_time_normalization?: boolean
 }
 
 export interface StoryGenerationRequest {
@@ -143,8 +144,11 @@ export async function getCurrentMemoryLibrary(): Promise<MemoryLibraryInfo> {
   return invoke('get_current_memory_library')
 }
 
-export async function createMemoryLibrary(name: string): Promise<MemoryLibraryInfo> {
-  return invoke('create_memory_library', { name })
+export async function createMemoryLibrary(
+  name: string,
+  enableTimeNormalization?: boolean,
+): Promise<MemoryLibraryInfo> {
+  return invoke('create_memory_library', { name, enableTimeNormalization })
 }
 
 export async function switchMemoryLibrary(libraryId: string): Promise<MemoryLibraryInfo> {

@@ -110,6 +110,12 @@ const currentLibrary = computed(() =>
 const canDeleteLibrary = computed(() => libraries.value.length > 1 && !!currentLibrary.value)
 const enabledPlugins = computed(() => pluginStore.enabledPlugins)
 
+function emitMemoryLibraryChanged() {
+  window.dispatchEvent(
+    new CustomEvent('memory-library-changed', { detail: { id: currentLibraryId.value } }),
+  )
+}
+
 async function refreshModelStatus() {
   const config = await getModelConfig()
   isOllamaProvider.value = config.provider.type === 'ollama'
@@ -259,6 +265,7 @@ async function refreshLibraries() {
   ])
   libraries.value = list
   currentLibraryId.value = current.id
+  emitMemoryLibraryChanged()
 }
 
 async function onSwitchLibrary() {
@@ -302,7 +309,29 @@ async function onCreateLibrary() {
     if (!libraryName) {
       return
     }
-    const created = await createMemoryLibrary(libraryName)
+
+    let enableTimeNormalization = false
+    try {
+      await ElMessageBox.confirm(
+        t('app.library.createTimeNormalizationPrompt'),
+        t('app.library.createTimeNormalizationTitle'),
+        {
+          confirmButtonText: t('app.library.createTimeNormalizationEnable'),
+          cancelButtonText: t('app.library.createTimeNormalizationDisable'),
+          distinguishCancelAndClose: true,
+          type: 'info',
+        },
+      )
+      enableTimeNormalization = true
+    } catch (modeChoice) {
+      if (modeChoice === 'cancel') {
+        enableTimeNormalization = false
+      } else {
+        return
+      }
+    }
+
+    const created = await createMemoryLibrary(libraryName, enableTimeNormalization)
     currentLibraryId.value = created.id
     await onSwitchLibrary()
   } catch (e) {

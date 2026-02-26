@@ -6,30 +6,29 @@ mod ollama;
 mod ollama_installer;
 mod whisper;
 
+use chrono::{Datelike, Duration as ChronoDuration, Local, NaiveDate, Utc};
 use database::{
-    get_entity_by_id, get_entity_by_name, get_graph_data, get_memories_for_entity,
-    get_memory_by_id, init_db, insert_memory, link_memory_entity, list_memories,
-    list_relations, upsert_entity, upsert_relation, update_memory, delete_memory,
-    clear_memory_entities, cleanup_database, clear_all_data, add_entity_alias,
-    find_entity_id_by_name_or_alias, merge_entities, prune_orphan_entities_and_relations,
-    DbState, Entity, GraphData, Memory,
+    add_entity_alias, cleanup_database, clear_all_data, clear_memory_entities, delete_memory,
+    find_entity_id_by_name_or_alias, get_entity_by_id, get_entity_by_name, get_graph_data,
+    get_memories_for_entity, get_memory_by_id, init_db, insert_memory, link_memory_entity,
+    list_memories, list_relations, merge_entities, prune_orphan_entities_and_relations,
+    update_memory, upsert_entity, upsert_relation, DbState, Entity, GraphData, Memory,
 };
 use file_manager::{list_memory_files, read_memory, write_memory, MdRecord};
 use model_client::{call_model_extract, call_model_fusion, call_model_simple};
 use model_config::{ModelConfig, ModelProvider};
 use ollama::{
-    call_ollama_extract_blocking,
-    check_ollama_status, ensure_model_available, ensure_ollama_running,
-    ExtractedData, ENTITY_EXTRACT_PROMPT, KNOWLEDGE_FUSION_PROMPT,
+    call_ollama_extract_blocking, check_ollama_status, ensure_model_available,
+    ensure_ollama_running, ExtractedData, ExtractedEntity, ExtractedRelation,
+    ENTITY_EXTRACT_PROMPT, KNOWLEDGE_FUSION_PROMPT,
 };
 use ollama_installer::download_and_open_ollama_installer;
-use whisper::{setup_whisper as setup_whisper_runtime, transcribe_audio_with_whisper};
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tauri::{Emitter, Manager, State};
-use serde::{Deserialize, Serialize};
-use chrono::Utc;
+use whisper::{setup_whisper as setup_whisper_runtime, transcribe_audio_with_whisper};
 
 pub struct AppRootDir(pub PathBuf);
 pub struct AppDataDir(pub Mutex<PathBuf>);
@@ -86,12 +85,16 @@ struct MemoryLibraryInfo {
     name: String,
     path: String,
     is_current: bool,
+    #[serde(default)]
+    enable_time_normalization: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct LibraryMeta {
     name: String,
     created_at: String,
+    #[serde(default)]
+    enable_time_normalization: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -395,7 +398,10 @@ fn read_external_plugin_manifest(plugin_dir: &Path) -> Result<ExternalPluginMani
                 .components()
                 .any(|c| matches!(c, std::path::Component::ParentDir))
         {
-            return Err("Plugin manifest field 'entry' must be a relative path inside plugin directory.".to_string());
+            return Err(
+                "Plugin manifest field 'entry' must be a relative path inside plugin directory."
+                    .to_string(),
+            );
         }
     }
     validate_plugin_id(&manifest.id)?;
@@ -435,7 +441,8 @@ fn copy_directory_recursive(src: &Path, dst: &Path) -> Result<(), String> {
             copy_directory_recursive(&src_path, &dst_path)?;
         } else if src_path.is_file() {
             if let Some(parent) = dst_path.parent() {
-                fs::create_dir_all(parent).map_err(|e| format!("Failed to create directory {:?}: {}", parent, e))?;
+                fs::create_dir_all(parent)
+                    .map_err(|e| format!("Failed to create directory {:?}: {}", parent, e))?;
             }
             fs::copy(&src_path, &dst_path)
                 .map_err(|e| format!("Failed to copy {:?} -> {:?}: {}", src_path, dst_path, e))?;
@@ -459,9 +466,12 @@ fn unique_story_project_id(root: &Path, base_id: &str) -> String {
 }
 
 fn ensure_library_structure(library_dir: &Path) -> Result<(), String> {
-    fs::create_dir_all(library_dir).map_err(|e| format!("Failed to create library directory: {e}"))?;
-    fs::create_dir_all(library_dir.join("database")).map_err(|e| format!("Failed to create database directory: {e}"))?;
-    fs::create_dir_all(library_dir.join("memories")).map_err(|e| format!("Failed to create memories directory: {e}"))?;
+    fs::create_dir_all(library_dir)
+        .map_err(|e| format!("Failed to create library directory: {e}"))?;
+    fs::create_dir_all(library_dir.join("database"))
+        .map_err(|e| format!("Failed to create database directory: {e}"))?;
+    fs::create_dir_all(library_dir.join("memories"))
+        .map_err(|e| format!("Failed to create memories directory: {e}"))?;
     Ok(())
 }
 
@@ -470,30 +480,55 @@ fn move_path_if_exists(from: &Path, to: &Path) -> Result<(), String> {
         return Ok(());
     }
     if let Some(parent) = to.parent() {
-        fs::create_dir_all(parent).map_err(|e| format!("Failed to create parent directory: {e}"))?;
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create parent directory: {e}"))?;
     }
     fs::rename(from, to).map_err(|e| format!("Failed to move {:?} to {:?}: {}", from, to, e))
 }
 
-fn load_library_name(library_dir: &Path, fallback: &str) -> String {
-    let meta_path = library_meta_path(library_dir);
-    if let Ok(content) = fs::read_to_string(meta_path) {
-        if let Ok(meta) = serde_json::from_str::<LibraryMeta>(&content) {
-            if !meta.name.trim().is_empty() {
-                return meta.name.trim().to_string();
-            }
-        }
-    }
-    fallback.to_string()
+fn load_library_meta(library_dir: &Path) -> Option<LibraryMeta> {
+    let content = fs::read_to_string(library_meta_path(library_dir)).ok()?;
+    serde_json::from_str::<LibraryMeta>(&content).ok()
 }
 
-fn save_library_meta(library_dir: &Path, name: &str) -> Result<(), String> {
+fn load_library_name(library_dir: &Path, fallback: &str) -> String {
+    let Some(meta) = load_library_meta(library_dir) else {
+        return fallback.to_string();
+    };
+    let trimmed = meta.name.trim();
+    if trimmed.is_empty() {
+        fallback.to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn load_library_time_normalization(library_dir: &Path) -> bool {
+    load_library_meta(library_dir)
+        .map(|meta| meta.enable_time_normalization)
+        .unwrap_or(false)
+}
+
+fn save_library_meta(
+    library_dir: &Path,
+    name: &str,
+    enable_time_normalization: Option<bool>,
+) -> Result<(), String> {
+    let existing = load_library_meta(library_dir);
     let meta = LibraryMeta {
         name: name.trim().to_string(),
-        created_at: Utc::now().to_rfc3339(),
+        created_at: existing
+            .as_ref()
+            .map(|x| x.created_at.clone())
+            .filter(|x| !x.trim().is_empty())
+            .unwrap_or_else(|| Utc::now().to_rfc3339()),
+        enable_time_normalization: enable_time_normalization
+            .or_else(|| existing.as_ref().map(|x| x.enable_time_normalization))
+            .unwrap_or(false),
     };
     let content = serde_json::to_string_pretty(&meta).map_err(|e| e.to_string())?;
-    fs::write(library_meta_path(library_dir), content).map_err(|e| format!("Failed to save library metadata: {e}"))?;
+    fs::write(library_meta_path(library_dir), content)
+        .map_err(|e| format!("Failed to save library metadata: {e}"))?;
     Ok(())
 }
 
@@ -509,7 +544,8 @@ fn read_saved_current_library_id(app_root: &Path) -> Option<String> {
 }
 
 fn persist_current_library_id(app_root: &Path, library_id: &str) -> Result<(), String> {
-    fs::write(current_library_file(app_root), library_id).map_err(|e| format!("Failed to persist current library: {e}"))
+    fs::write(current_library_file(app_root), library_id)
+        .map_err(|e| format!("Failed to persist current library: {e}"))
 }
 
 fn build_library_info(library_dir: &Path, library_id: &str, current_id: &str) -> MemoryLibraryInfo {
@@ -518,6 +554,7 @@ fn build_library_info(library_dir: &Path, library_id: &str, current_id: &str) ->
         name: load_library_name(library_dir, library_id),
         path: library_dir.to_string_lossy().to_string(),
         is_current: library_id == current_id,
+        enable_time_normalization: load_library_time_normalization(library_dir),
     }
 }
 
@@ -558,7 +595,10 @@ fn switch_to_library_internal(
     let conn = init_db(&db_path).map_err(|e| e.to_string())?;
 
     {
-        let mut db_guard = (&**db).0.lock().map_err(|e: std::sync::PoisonError<_>| e.to_string())?;
+        let mut db_guard = (&**db)
+            .0
+            .lock()
+            .map_err(|e: std::sync::PoisonError<_>| e.to_string())?;
         *db_guard = Some(conn);
     }
     {
@@ -618,6 +658,7 @@ fn get_current_memory_library(
 #[tauri::command]
 fn create_memory_library(
     name: String,
+    enable_time_normalization: Option<bool>,
     app_root: State<AppRootDir>,
     current_library: State<CurrentLibraryId>,
     config_state: State<ModelConfigState>,
@@ -634,7 +675,11 @@ fn create_memory_library(
     let library_id = unique_library_id(&root, &base_id);
     let library_dir = root.join(&library_id);
     ensure_library_structure(&library_dir)?;
-    save_library_meta(&library_dir, trimmed)?;
+    save_library_meta(
+        &library_dir,
+        trimmed,
+        Some(enable_time_normalization.unwrap_or(false)),
+    )?;
 
     // Initialize with current model config so the new library is ready immediately.
     let current_config = config_state.0.lock().map_err(|e| e.to_string())?.clone();
@@ -687,7 +732,7 @@ fn rename_memory_library(
     if !dir.exists() || !dir.is_dir() {
         return Err(format!("Library '{}' does not exist.", library_id));
     }
-    save_library_meta(&dir, name)?;
+    save_library_meta(&dir, name, None)?;
 
     let current_id = get_current_library_id(&current_library)?;
     Ok(build_library_info(&dir, library_id, &current_id))
@@ -761,7 +806,13 @@ fn save_story_project(
         .map(normalize_story_project_id)
         .unwrap_or_else(|| normalize_story_project_id(title));
 
-    if request.project_id.as_deref().unwrap_or("").trim().is_empty() {
+    if request
+        .project_id
+        .as_deref()
+        .unwrap_or("")
+        .trim()
+        .is_empty()
+    {
         project_id = unique_story_project_id(&root, &project_id);
     }
 
@@ -785,9 +836,18 @@ fn save_story_project(
         chapter_plan: request.chapter_plan,
         continuity_checks: request.continuity_checks,
         written_chapters: request.written_chapters,
-        style: request.style.map(|x| x.trim().to_string()).filter(|x| !x.is_empty()),
-        constraints: request.constraints.map(|x| x.trim().to_string()).filter(|x| !x.is_empty()),
-        language: request.language.map(|x| x.trim().to_string()).filter(|x| !x.is_empty()),
+        style: request
+            .style
+            .map(|x| x.trim().to_string())
+            .filter(|x| !x.is_empty()),
+        constraints: request
+            .constraints
+            .map(|x| x.trim().to_string())
+            .filter(|x| !x.is_empty()),
+        language: request
+            .language
+            .map(|x| x.trim().to_string())
+            .filter(|x| !x.is_empty()),
         created_at,
         updated_at: now.clone(),
     };
@@ -834,14 +894,18 @@ fn list_story_projects(data_dir: State<AppDataDir>) -> Result<Vec<StoryProjectSu
 }
 
 #[tauri::command]
-fn load_story_project(project_id: String, data_dir: State<AppDataDir>) -> Result<StoryProjectData, String> {
+fn load_story_project(
+    project_id: String,
+    data_dir: State<AppDataDir>,
+) -> Result<StoryProjectData, String> {
     let project_id = project_id.trim();
     if project_id.is_empty() {
         return Err("Project id cannot be empty.".to_string());
     }
     let data_dir = get_current_data_dir(&data_dir)?;
     let path = story_project_file_path(&data_dir, project_id);
-    let content = fs::read_to_string(&path).map_err(|e| format!("Failed to read story project: {e}"))?;
+    let content =
+        fs::read_to_string(&path).map_err(|e| format!("Failed to read story project: {e}"))?;
     let project = serde_json::from_str::<StoryProjectData>(&content)
         .map_err(|e| format!("Failed to parse story project: {e}"))?;
     Ok(project)
@@ -878,7 +942,9 @@ fn list_external_plugins(app_root: State<AppRootDir>) -> Result<Vec<ExternalPlug
     fs::create_dir_all(&root).map_err(|e| format!("Failed to create plugins directory: {e}"))?;
 
     let mut plugins = Vec::new();
-    for entry in fs::read_dir(&root).map_err(|e| format!("Failed to read plugins directory: {e}"))? {
+    for entry in
+        fs::read_dir(&root).map_err(|e| format!("Failed to read plugins directory: {e}"))?
+    {
         let entry = entry.map_err(|e| e.to_string())?;
         let path = entry.path();
         if !path.is_dir() {
@@ -918,7 +984,10 @@ fn install_external_plugin(
     }
     let source_dir = PathBuf::from(trimmed);
     if !source_dir.exists() || !source_dir.is_dir() {
-        return Err(format!("Plugin source directory does not exist: {}", trimmed));
+        return Err(format!(
+            "Plugin source directory does not exist: {}",
+            trimmed
+        ));
     }
     let source_manifest = read_external_plugin_manifest(&source_dir)?;
 
@@ -927,8 +996,8 @@ fn install_external_plugin(
 
     let source_canonical = fs::canonicalize(&source_dir)
         .map_err(|e| format!("Failed to resolve source directory: {e}"))?;
-    let root_canonical = fs::canonicalize(&root)
-        .map_err(|e| format!("Failed to resolve plugins directory: {e}"))?;
+    let root_canonical =
+        fs::canonicalize(&root).map_err(|e| format!("Failed to resolve plugins directory: {e}"))?;
     if source_canonical.starts_with(&root_canonical) {
         return Err("Source directory cannot be inside the managed plugins directory.".to_string());
     }
@@ -944,7 +1013,10 @@ fn install_external_plugin(
 }
 
 #[tauri::command]
-fn uninstall_external_plugin(plugin_id: String, app_root: State<AppRootDir>) -> Result<String, String> {
+fn uninstall_external_plugin(
+    plugin_id: String,
+    app_root: State<AppRootDir>,
+) -> Result<String, String> {
     let plugin_id = plugin_id.trim();
     validate_plugin_id(plugin_id)?;
     let root = plugins_root(&app_root.0);
@@ -960,7 +1032,8 @@ fn uninstall_external_plugin(plugin_id: String, app_root: State<AppRootDir>) -> 
 fn open_memories_folder(data_dir: State<AppDataDir>) -> Result<String, String> {
     let data_dir = get_current_data_dir(&data_dir)?;
     let memories_dir = data_dir.join("memories");
-    fs::create_dir_all(&memories_dir).map_err(|e| format!("Failed to create memories directory: {e}"))?;
+    fs::create_dir_all(&memories_dir)
+        .map_err(|e| format!("Failed to create memories directory: {e}"))?;
     open_folder_in_os(&memories_dir)?;
     Ok(memories_dir.to_string_lossy().to_string())
 }
@@ -969,7 +1042,8 @@ fn open_memories_folder(data_dir: State<AppDataDir>) -> Result<String, String> {
 fn get_memories_folder_path(data_dir: State<AppDataDir>) -> Result<String, String> {
     let data_dir = get_current_data_dir(&data_dir)?;
     let memories_dir = data_dir.join("memories");
-    fs::create_dir_all(&memories_dir).map_err(|e| format!("Failed to create memories directory: {e}"))?;
+    fs::create_dir_all(&memories_dir)
+        .map_err(|e| format!("Failed to create memories directory: {e}"))?;
     Ok(memories_dir.to_string_lossy().to_string())
 }
 
@@ -982,11 +1056,12 @@ fn read_memory_file(path: String, _data_dir: State<AppDataDir>) -> Result<MdReco
 fn extract_entities(text: String) -> Result<ExtractedData, String> {
     ensure_ollama_running("http://localhost:11434")?;
     ensure_model_available("http://localhost:11434", OLLAMA_MODEL_EXTRACT)?;
-    call_ollama_extract_blocking("http://localhost:11434", OLLAMA_MODEL_EXTRACT, &text)
-        .or_else(|_| {
+    call_ollama_extract_blocking("http://localhost:11434", OLLAMA_MODEL_EXTRACT, &text).or_else(
+        |_| {
             let _ = ensure_model_available("http://localhost:11434", OLLAMA_MODEL);
             call_ollama_extract_blocking("http://localhost:11434", OLLAMA_MODEL, &text)
-        })
+        },
+    )
 }
 
 /// Blocking core logic for save_memory, executed inside spawn_blocking to ensure real-time event delivery.
@@ -999,41 +1074,80 @@ fn do_save_memory(
 ) -> Result<Memory, String> {
     // Emit current model info
     match &config.provider {
-        ModelProvider::Ollama { model_name, extract_model_name, .. } => {
-            emit_save_progress(&app, "saveProgress.modelInfo.ollama", "info", serde_json::json!({ "model": extract_model_name }));
+        ModelProvider::Ollama {
+            model_name,
+            extract_model_name,
+            ..
+        } => {
+            emit_save_progress(
+                &app,
+                "saveProgress.modelInfo.ollama",
+                "info",
+                serde_json::json!({ "model": extract_model_name }),
+            );
             println!("📝 [save_memory] Using Ollama model: {}", model_name);
         }
         ModelProvider::DeepSeek { model_name, .. } => {
-            emit_save_progress(&app, "saveProgress.modelInfo.deepseek", "info", serde_json::json!({ "model": model_name }));
+            emit_save_progress(
+                &app,
+                "saveProgress.modelInfo.deepseek",
+                "info",
+                serde_json::json!({ "model": model_name }),
+            );
             println!("📝 [save_memory] Using DeepSeek API: {}", model_name);
         }
         ModelProvider::OpenAI { model_name, .. } => {
-            emit_save_progress(&app, "saveProgress.modelInfo.openai", "info", serde_json::json!({ "model": model_name }));
+            emit_save_progress(
+                &app,
+                "saveProgress.modelInfo.openai",
+                "info",
+                serde_json::json!({ "model": model_name }),
+            );
             println!("📝 [save_memory] Using OpenAI API: {}", model_name);
         }
     }
 
     // Step 1: Quick entity extraction to find related entities for history lookup
-    emit_save_progress(&app, "saveProgress.step1.extracting", "running", serde_json::json!({}));
+    emit_save_progress(
+        &app,
+        "saveProgress.step1.extracting",
+        "running",
+        serde_json::json!({}),
+    );
     println!("🔍 [Step 1] Starting entity extraction...");
     let quick_extracted: Option<ExtractedData> = if content.trim().len() > 5 {
-        if let ModelProvider::Ollama { base_url, extract_model_name, .. } = &config.provider {
+        if let ModelProvider::Ollama {
+            base_url,
+            extract_model_name,
+            ..
+        } = &config.provider
+        {
             let _ = ensure_ollama_running(base_url);
             let _ = ensure_model_available(base_url, extract_model_name);
         }
         match call_model_extract(&config, ENTITY_EXTRACT_PROMPT, &content) {
             Ok(extracted) if extracted.entities.is_empty() => {
                 println!("❌ [Step 1] Extraction returned 0 entities, aborting save");
-                return Err(serde_json::json!({ "code": "saveProgress.errors.noEntities" }).to_string());
+                return Err(
+                    serde_json::json!({ "code": "saveProgress.errors.noEntities" }).to_string(),
+                );
             }
             Ok(extracted) => {
-                emit_save_progress(&app, "saveProgress.step1.extracted", "success", serde_json::json!({ "count": extracted.entities.len() }));
+                emit_save_progress(
+                    &app,
+                    "saveProgress.step1.extracted",
+                    "success",
+                    serde_json::json!({ "count": extracted.entities.len() }),
+                );
                 println!("✅ Extracted {} entities", extracted.entities.len());
                 Some(extracted)
             }
             Err(e) => {
                 println!("❌ [Step 1] Entity extraction failed, aborting save: {}", e);
-                return Err(serde_json::json!({ "code": "saveProgress.errors.extractFailed", "reason": e }).to_string());
+                return Err(
+                    serde_json::json!({ "code": "saveProgress.errors.extractFailed", "reason": e })
+                        .to_string(),
+                );
             }
         }
     } else {
@@ -1041,20 +1155,36 @@ fn do_save_memory(
     };
 
     // Step 2: Fetch related historical memories for knowledge fusion
-    emit_save_progress(&app, "saveProgress.step2.lookingUp", "running", serde_json::json!({}));
+    emit_save_progress(
+        &app,
+        "saveProgress.step2.lookingUp",
+        "running",
+        serde_json::json!({}),
+    );
     println!("🔍 [Step 2] Looking up related historical memories...");
     let historical_memories = if let Some(ref ex) = quick_extracted {
         let selected = {
             let db = app.state::<DbState>();
             let mut guard =
-                db.0.lock().map_err(|e: std::sync::PoisonError<_>| e.to_string())?;
+                db.0.lock()
+                    .map_err(|e: std::sync::PoisonError<_>| e.to_string())?;
             let conn = guard.as_mut().ok_or("database not initialized")?;
             collect_relevant_historical_memories(conn, ex, &content, None)?
         };
         if selected.is_empty() {
-            emit_save_progress(&app, "saveProgress.step2.noHistory", "success", serde_json::json!({}));
+            emit_save_progress(
+                &app,
+                "saveProgress.step2.noHistory",
+                "success",
+                serde_json::json!({}),
+            );
         } else {
-            emit_save_progress(&app, "saveProgress.step2.found", "success", serde_json::json!({ "count": selected.len() }));
+            emit_save_progress(
+                &app,
+                "saveProgress.step2.found",
+                "success",
+                serde_json::json!({ "count": selected.len() }),
+            );
         }
         println!(
             "✅ Selected {} relevant memories (top_k={}, budget={} chars)",
@@ -1064,78 +1194,154 @@ fn do_save_memory(
         );
         selected
     } else {
-        emit_save_progress(&app, "saveProgress.step2.noHistory", "success", serde_json::json!({}));
+        emit_save_progress(
+            &app,
+            "saveProgress.step2.noHistory",
+            "success",
+            serde_json::json!({}),
+        );
         Vec::new()
     };
 
     // Step 3: Knowledge fusion (only when historical memories exist)
     let fused = if !historical_memories.is_empty() && content.trim().len() > 5 {
-        emit_save_progress(&app, "saveProgress.step3.fusing", "running", serde_json::json!({}));
+        emit_save_progress(
+            &app,
+            "saveProgress.step3.fusing",
+            "running",
+            serde_json::json!({}),
+        );
         println!("🧠 [Step 3] Starting knowledge fusion...");
-        if let ModelProvider::Ollama { base_url, model_name, .. } = &config.provider {
+        if let ModelProvider::Ollama {
+            base_url,
+            model_name,
+            ..
+        } = &config.provider
+        {
             let _ = ensure_model_available(base_url, model_name);
         }
-        call_model_fusion(&config, KNOWLEDGE_FUSION_PROMPT, &historical_memories, &content)
-            .map_err(|e| {
-                emit_save_progress(&app, "saveProgress.step3.fusionFailed", "warning", serde_json::json!({}));
-                println!("⚠️ Knowledge fusion failed, falling back: {}", e);
-                e
-            })
-            .ok()
+        call_model_fusion(
+            &config,
+            KNOWLEDGE_FUSION_PROMPT,
+            &historical_memories,
+            &content,
+        )
+        .map_err(|e| {
+            emit_save_progress(
+                &app,
+                "saveProgress.step3.fusionFailed",
+                "warning",
+                serde_json::json!({}),
+            );
+            println!("⚠️ Knowledge fusion failed, falling back: {}", e);
+            e
+        })
+        .ok()
     } else {
-        emit_save_progress(&app, "saveProgress.step3.skipped", "skipped", serde_json::json!({}));
+        emit_save_progress(
+            &app,
+            "saveProgress.step3.skipped",
+            "skipped",
+            serde_json::json!({}),
+        );
         println!("⏭️ [Step 3] Skipping knowledge fusion (no historical memories)");
         None
     };
 
-    let (entities, relations, aliases) = if let Some(fused_data) = fused {
-        emit_save_progress(&app, "saveProgress.step3.fusionDone", "success",
-            serde_json::json!({ "entities": fused_data.entities.len(), "relations": fused_data.relations.len() }));
-        println!("✅ Knowledge fusion complete: {} entities, {} relations, {} aliases",
-                 fused_data.entities.len(), fused_data.relations.len(), fused_data.aliases.len());
-        (fused_data.entities, fused_data.relations, fused_data.aliases)
+    let (mut entities, mut relations, aliases) = if let Some(fused_data) = fused {
+        emit_save_progress(
+            &app,
+            "saveProgress.step3.fusionDone",
+            "success",
+            serde_json::json!({ "entities": fused_data.entities.len(), "relations": fused_data.relations.len() }),
+        );
+        println!(
+            "✅ Knowledge fusion complete: {} entities, {} relations, {} aliases",
+            fused_data.entities.len(),
+            fused_data.relations.len(),
+            fused_data.aliases.len()
+        );
+        (
+            fused_data.entities,
+            fused_data.relations,
+            fused_data.aliases,
+        )
     } else if let Some(ex) = quick_extracted {
-        emit_save_progress(&app, "saveProgress.step3.extractionDone", "success",
-            serde_json::json!({ "entities": ex.entities.len(), "relations": ex.relations.len() }));
-        println!("✅ Using quick extraction results: {} entities, {} relations",
-                 ex.entities.len(), ex.relations.len());
+        emit_save_progress(
+            &app,
+            "saveProgress.step3.extractionDone",
+            "success",
+            serde_json::json!({ "entities": ex.entities.len(), "relations": ex.relations.len() }),
+        );
+        println!(
+            "✅ Using quick extraction results: {} entities, {} relations",
+            ex.entities.len(),
+            ex.relations.len()
+        );
         (ex.entities, ex.relations, Vec::new())
     } else {
-        emit_save_progress(&app, "saveProgress.step3.noEntities", "warning", serde_json::json!({}));
+        emit_save_progress(
+            &app,
+            "saveProgress.step3.noEntities",
+            "warning",
+            serde_json::json!({}),
+        );
         println!("⚠️ No entities extracted");
         (Vec::new(), Vec::new(), Vec::new())
     };
 
+    if is_time_normalization_enabled_for_active_library(&app) {
+        normalize_time_entities_in_place(
+            &mut entities,
+            &mut relations,
+            &config,
+            Local::now().date_naive(),
+        );
+    }
+
     let entity_names: Vec<String> = entities.iter().map(|x| x.name.clone()).collect();
 
     // Step 4: Persist to database
-    emit_save_progress(&app, "saveProgress.step4.saving", "running", serde_json::json!({}));
+    emit_save_progress(
+        &app,
+        "saveProgress.step4.saving",
+        "running",
+        serde_json::json!({}),
+    );
     println!("💾 [Step 4] Saving to database...");
     let path = write_memory(
         &memories_dir,
         &content,
         tags.as_deref(),
-        if entity_names.is_empty() { None } else { Some(&entity_names) },
+        if entity_names.is_empty() {
+            None
+        } else {
+            Some(&entity_names)
+        },
     )?;
     let path_str = path.to_string_lossy().to_string();
 
     let saved_memory = {
         let db = app.state::<DbState>();
-        let mut guard = db.0.lock().map_err(|e: std::sync::PoisonError<_>| e.to_string())?;
+        let mut guard =
+            db.0.lock()
+                .map_err(|e: std::sync::PoisonError<_>| e.to_string())?;
         let conn = guard.as_mut().ok_or("database not initialized")?;
 
         let tags_str = tags.as_ref().map(|t| t.join(","));
         let memory_id = insert_memory(conn, &content, Some(&path_str), tags_str.as_deref())
             .map_err(|e| e.to_string())?;
 
-        let mut name_to_id: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+        let mut name_to_id: std::collections::HashMap<String, i64> =
+            std::collections::HashMap::new();
         for e in &entities {
             let attrs = e.attributes.as_ref().map(|a| a.to_string());
-            let entity_id = match find_entity_id_by_name_or_alias(conn, &e.name).map_err(|e| e.to_string())? {
-                Some(id) => id,
-                None => upsert_entity(conn, &e.entity_type, &e.name, attrs.as_deref())
-                    .map_err(|e| e.to_string())?,
-            };
+            let entity_id =
+                match find_entity_id_by_name_or_alias(conn, &e.name).map_err(|e| e.to_string())? {
+                    Some(id) => id,
+                    None => upsert_entity(conn, &e.entity_type, &e.name, attrs.as_deref())
+                        .map_err(|e| e.to_string())?,
+                };
             link_memory_entity(conn, memory_id, entity_id).map_err(|e| e.to_string())?;
             name_to_id.insert(e.name.clone(), entity_id);
         }
@@ -1154,7 +1360,8 @@ fn do_save_memory(
             }
         }
         for r in &relations {
-            if let (Some(&from_id), Some(&to_id)) = (name_to_id.get(&r.from), name_to_id.get(&r.to)) {
+            if let (Some(&from_id), Some(&to_id)) = (name_to_id.get(&r.from), name_to_id.get(&r.to))
+            {
                 let _ = upsert_relation(conn, from_id, to_id, &r.relation);
             }
         }
@@ -1177,44 +1384,57 @@ async fn save_memory(
 ) -> Result<Memory, String> {
     let config = config_state.0.lock().map_err(|e| e.to_string())?.clone();
     let memories_dir = get_current_data_dir(&data_dir)?.join("memories");
-    tokio::task::spawn_blocking(move || {
-        do_save_memory(app, content, tags, config, memories_dir)
-    })
-    .await
-    .map_err(|e| e.to_string())?
+    tokio::task::spawn_blocking(move || do_save_memory(app, content, tags, config, memories_dir))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
 fn get_memories_list(db: State<DbState>) -> Result<Vec<Memory>, String> {
-    let mut guard = (&*db).0.lock().map_err(|e: std::sync::PoisonError<_>| e.to_string())?;
+    let mut guard = (&*db)
+        .0
+        .lock()
+        .map_err(|e: std::sync::PoisonError<_>| e.to_string())?;
     let conn = guard.as_mut().ok_or("database not initialized")?;
     list_memories(conn).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn get_graph(db: State<DbState>) -> Result<GraphData, String> {
-    let mut guard = (&*db).0.lock().map_err(|e: std::sync::PoisonError<_>| e.to_string())?;
+    let mut guard = (&*db)
+        .0
+        .lock()
+        .map_err(|e: std::sync::PoisonError<_>| e.to_string())?;
     let conn = guard.as_mut().ok_or("database not initialized")?;
     get_graph_data(conn).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn query_entity(name: String, db: State<DbState>) -> Result<Option<Entity>, String> {
-    let mut guard = (&*db).0.lock().map_err(|e: std::sync::PoisonError<_>| e.to_string())?;
+    let mut guard = (&*db)
+        .0
+        .lock()
+        .map_err(|e: std::sync::PoisonError<_>| e.to_string())?;
     let conn = guard.as_mut().ok_or("database not initialized")?;
     get_entity_by_name(conn, &name).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn search_memories_by_entity(entity_id: i64, db: State<DbState>) -> Result<Vec<Memory>, String> {
-    let mut guard = (&*db).0.lock().map_err(|e: std::sync::PoisonError<_>| e.to_string())?;
+    let mut guard = (&*db)
+        .0
+        .lock()
+        .map_err(|e: std::sync::PoisonError<_>| e.to_string())?;
     let conn = guard.as_mut().ok_or("database not initialized")?;
     get_memories_for_entity(conn, entity_id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn get_character_profile(entity_id: i64, db: State<DbState>) -> Result<serde_json::Value, String> {
-    let mut guard = (&*db).0.lock().map_err(|e: std::sync::PoisonError<_>| e.to_string())?;
+    let mut guard = (&*db)
+        .0
+        .lock()
+        .map_err(|e: std::sync::PoisonError<_>| e.to_string())?;
     let conn = guard.as_mut().ok_or("database not initialized")?;
     let entity = get_entity_by_id(conn, entity_id).map_err(|e| e.to_string())?;
     let memories = get_memories_for_entity(conn, entity_id).map_err(|e| e.to_string())?;
@@ -1261,7 +1481,10 @@ fn get_character_profile(entity_id: i64, db: State<DbState>) -> Result<serde_jso
 
 #[tauri::command]
 fn get_timeline(db: State<DbState>) -> Result<Vec<Memory>, String> {
-    let mut guard = (&*db).0.lock().map_err(|e: std::sync::PoisonError<_>| e.to_string())?;
+    let mut guard = (&*db)
+        .0
+        .lock()
+        .map_err(|e: std::sync::PoisonError<_>| e.to_string())?;
     let conn = guard.as_mut().ok_or("database not initialized")?;
     list_memories(conn).map_err(|e| e.to_string())
 }
@@ -1276,38 +1499,78 @@ fn do_update_memory(
 ) -> Result<Memory, String> {
     println!("📝 [update_memory ID:{}]", memory_id);
     match &config.provider {
-        ModelProvider::Ollama { extract_model_name, .. } => {
-            emit_save_progress(&app, "saveProgress.modelInfo.ollama", "info", serde_json::json!({ "model": extract_model_name }));
+        ModelProvider::Ollama {
+            extract_model_name, ..
+        } => {
+            emit_save_progress(
+                &app,
+                "saveProgress.modelInfo.ollama",
+                "info",
+                serde_json::json!({ "model": extract_model_name }),
+            );
         }
         ModelProvider::DeepSeek { model_name, .. } => {
-            emit_save_progress(&app, "saveProgress.modelInfo.deepseek", "info", serde_json::json!({ "model": model_name }));
+            emit_save_progress(
+                &app,
+                "saveProgress.modelInfo.deepseek",
+                "info",
+                serde_json::json!({ "model": model_name }),
+            );
         }
         ModelProvider::OpenAI { model_name, .. } => {
-            emit_save_progress(&app, "saveProgress.modelInfo.openai", "info", serde_json::json!({ "model": model_name }));
+            emit_save_progress(
+                &app,
+                "saveProgress.modelInfo.openai",
+                "info",
+                serde_json::json!({ "model": model_name }),
+            );
         }
     }
 
     // Step 1: Quick entity extraction
-    emit_save_progress(&app, "saveProgress.step1.extracting", "running", serde_json::json!({}));
+    emit_save_progress(
+        &app,
+        "saveProgress.step1.extracting",
+        "running",
+        serde_json::json!({}),
+    );
     println!("🔍 Starting entity extraction...");
     let quick_extracted = if content.trim().len() > 5 {
-        if let ModelProvider::Ollama { base_url, extract_model_name, .. } = &config.provider {
+        if let ModelProvider::Ollama {
+            base_url,
+            extract_model_name,
+            ..
+        } = &config.provider
+        {
             let _ = ensure_ollama_running(base_url);
             let _ = ensure_model_available(base_url, extract_model_name);
         }
         match call_model_extract(&config, ENTITY_EXTRACT_PROMPT, &content) {
             Ok(extracted) if extracted.entities.is_empty() => {
                 println!("❌ [Step 1] Extraction returned 0 entities, aborting update");
-                return Err(serde_json::json!({ "code": "saveProgress.errors.noEntities" }).to_string());
+                return Err(
+                    serde_json::json!({ "code": "saveProgress.errors.noEntities" }).to_string(),
+                );
             }
             Ok(extracted) => {
-                emit_save_progress(&app, "saveProgress.step1.extracted", "success", serde_json::json!({ "count": extracted.entities.len() }));
+                emit_save_progress(
+                    &app,
+                    "saveProgress.step1.extracted",
+                    "success",
+                    serde_json::json!({ "count": extracted.entities.len() }),
+                );
                 println!("✅ Extracted {} entities", extracted.entities.len());
                 Some(extracted)
             }
             Err(e) => {
-                println!("❌ [Step 1] Entity extraction failed, aborting update: {}", e);
-                return Err(serde_json::json!({ "code": "saveProgress.errors.extractFailed", "reason": e }).to_string());
+                println!(
+                    "❌ [Step 1] Entity extraction failed, aborting update: {}",
+                    e
+                );
+                return Err(
+                    serde_json::json!({ "code": "saveProgress.errors.extractFailed", "reason": e })
+                        .to_string(),
+                );
             }
         }
     } else {
@@ -1315,73 +1578,150 @@ fn do_update_memory(
     };
 
     // Step 2: Fetch related historical memories for knowledge fusion
-    emit_save_progress(&app, "saveProgress.step2.lookingUp", "running", serde_json::json!({}));
+    emit_save_progress(
+        &app,
+        "saveProgress.step2.lookingUp",
+        "running",
+        serde_json::json!({}),
+    );
     let historical_memories = if let Some(ref ex) = quick_extracted {
         let selected = {
             let db = app.state::<DbState>();
             let mut guard =
-                db.0.lock().map_err(|e: std::sync::PoisonError<_>| e.to_string())?;
+                db.0.lock()
+                    .map_err(|e: std::sync::PoisonError<_>| e.to_string())?;
             let conn = guard.as_mut().ok_or("database not initialized")?;
             collect_relevant_historical_memories(conn, ex, &content, Some(memory_id))?
         };
         if selected.is_empty() {
-            emit_save_progress(&app, "saveProgress.step2.noHistory", "success", serde_json::json!({}));
+            emit_save_progress(
+                &app,
+                "saveProgress.step2.noHistory",
+                "success",
+                serde_json::json!({}),
+            );
         } else {
-            emit_save_progress(&app, "saveProgress.step2.found", "success", serde_json::json!({ "count": selected.len() }));
+            emit_save_progress(
+                &app,
+                "saveProgress.step2.found",
+                "success",
+                serde_json::json!({ "count": selected.len() }),
+            );
         }
         selected
     } else {
-        emit_save_progress(&app, "saveProgress.step2.noHistory", "success", serde_json::json!({}));
+        emit_save_progress(
+            &app,
+            "saveProgress.step2.noHistory",
+            "success",
+            serde_json::json!({}),
+        );
         Vec::new()
     };
 
     // Step 3: Knowledge fusion
     let fused = if !historical_memories.is_empty() && content.trim().len() > 5 {
-        emit_save_progress(&app, "saveProgress.step3.fusing", "running", serde_json::json!({}));
+        emit_save_progress(
+            &app,
+            "saveProgress.step3.fusing",
+            "running",
+            serde_json::json!({}),
+        );
         println!("🧠 Running knowledge fusion...");
-        if let ModelProvider::Ollama { base_url, model_name, .. } = &config.provider {
+        if let ModelProvider::Ollama {
+            base_url,
+            model_name,
+            ..
+        } = &config.provider
+        {
             let _ = ensure_model_available(base_url, model_name);
         }
-        call_model_fusion(&config, KNOWLEDGE_FUSION_PROMPT, &historical_memories, &content).ok()
+        call_model_fusion(
+            &config,
+            KNOWLEDGE_FUSION_PROMPT,
+            &historical_memories,
+            &content,
+        )
+        .ok()
     } else {
-        emit_save_progress(&app, "saveProgress.step3.skipped", "skipped", serde_json::json!({}));
+        emit_save_progress(
+            &app,
+            "saveProgress.step3.skipped",
+            "skipped",
+            serde_json::json!({}),
+        );
         None
     };
 
-    let (entities, relations, aliases) = if let Some(fused_data) = fused {
-        emit_save_progress(&app, "saveProgress.step3.fusionDone", "success",
-            serde_json::json!({ "entities": fused_data.entities.len(), "relations": fused_data.relations.len() }));
+    let (mut entities, mut relations, aliases) = if let Some(fused_data) = fused {
+        emit_save_progress(
+            &app,
+            "saveProgress.step3.fusionDone",
+            "success",
+            serde_json::json!({ "entities": fused_data.entities.len(), "relations": fused_data.relations.len() }),
+        );
         println!("✅ Knowledge fusion complete");
-        (fused_data.entities, fused_data.relations, fused_data.aliases)
+        (
+            fused_data.entities,
+            fused_data.relations,
+            fused_data.aliases,
+        )
     } else if let Some(ex) = quick_extracted {
-        emit_save_progress(&app, "saveProgress.step3.extractionDone", "success",
-            serde_json::json!({ "entities": ex.entities.len(), "relations": ex.relations.len() }));
+        emit_save_progress(
+            &app,
+            "saveProgress.step3.extractionDone",
+            "success",
+            serde_json::json!({ "entities": ex.entities.len(), "relations": ex.relations.len() }),
+        );
         println!("✅ Using quick extraction results");
         (ex.entities, ex.relations, Vec::new())
     } else {
-        emit_save_progress(&app, "saveProgress.step3.noEntities", "warning", serde_json::json!({}));
+        emit_save_progress(
+            &app,
+            "saveProgress.step3.noEntities",
+            "warning",
+            serde_json::json!({}),
+        );
         (Vec::new(), Vec::new(), Vec::new())
     };
 
+    if is_time_normalization_enabled_for_active_library(&app) {
+        normalize_time_entities_in_place(
+            &mut entities,
+            &mut relations,
+            &config,
+            Local::now().date_naive(),
+        );
+    }
+
     // Step 4: Persist to database
-    emit_save_progress(&app, "saveProgress.step4.saving", "running", serde_json::json!({}));
+    emit_save_progress(
+        &app,
+        "saveProgress.step4.saving",
+        "running",
+        serde_json::json!({}),
+    );
     let updated_memory = {
         let db = app.state::<DbState>();
-        let mut guard = db.0.lock().map_err(|e: std::sync::PoisonError<_>| e.to_string())?;
+        let mut guard =
+            db.0.lock()
+                .map_err(|e: std::sync::PoisonError<_>| e.to_string())?;
         let conn = guard.as_mut().ok_or("database not initialized")?;
         let tx = conn.transaction().map_err(|e| e.to_string())?;
 
         update_memory(&tx, memory_id, &content, tags_str.as_deref()).map_err(|e| e.to_string())?;
         clear_memory_entities(&tx, memory_id).map_err(|e| e.to_string())?;
 
-        let mut name_to_id: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+        let mut name_to_id: std::collections::HashMap<String, i64> =
+            std::collections::HashMap::new();
         for e in &entities {
             let attrs = e.attributes.as_ref().map(|a| a.to_string());
-            let entity_id = match find_entity_id_by_name_or_alias(&tx, &e.name).map_err(|e| e.to_string())? {
-                Some(id) => id,
-                None => upsert_entity(&tx, &e.entity_type, &e.name, attrs.as_deref())
-                    .map_err(|e| e.to_string())?,
-            };
+            let entity_id =
+                match find_entity_id_by_name_or_alias(&tx, &e.name).map_err(|e| e.to_string())? {
+                    Some(id) => id,
+                    None => upsert_entity(&tx, &e.entity_type, &e.name, attrs.as_deref())
+                        .map_err(|e| e.to_string())?,
+                };
             link_memory_entity(&tx, memory_id, entity_id).map_err(|e| e.to_string())?;
             name_to_id.insert(e.name.clone(), entity_id);
         }
@@ -1400,7 +1740,8 @@ fn do_update_memory(
             }
         }
         for r in &relations {
-            if let (Some(&from_id), Some(&to_id)) = (name_to_id.get(&r.from), name_to_id.get(&r.to)) {
+            if let (Some(&from_id), Some(&to_id)) = (name_to_id.get(&r.from), name_to_id.get(&r.to))
+            {
                 let _ = upsert_relation(&tx, from_id, to_id, &r.relation);
             }
         }
@@ -1410,7 +1751,12 @@ fn do_update_memory(
         get_memory_by_id(conn, memory_id).map_err(|e| e.to_string())?
     };
 
-    emit_save_progress(&app, "saveProgress.updateDone", "done", serde_json::json!({}));
+    emit_save_progress(
+        &app,
+        "saveProgress.updateDone",
+        "done",
+        serde_json::json!({}),
+    );
     println!("✅ Memory updated successfully!");
     Ok(updated_memory)
 }
@@ -1425,23 +1771,27 @@ async fn update_memory_content(
 ) -> Result<Memory, String> {
     let config = config_state.0.lock().map_err(|e| e.to_string())?.clone();
     let tags_str = tags.map(|t| t.join(","));
-    tokio::task::spawn_blocking(move || {
-        do_update_memory(app, memory_id, content, tags_str, config)
-    })
-    .await
-    .map_err(|e| e.to_string())?
+    tokio::task::spawn_blocking(move || do_update_memory(app, memory_id, content, tags_str, config))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
 fn delete_memory_by_id(memory_id: i64, db: State<DbState>) -> Result<(), String> {
-    let mut guard = (&*db).0.lock().map_err(|e: std::sync::PoisonError<_>| e.to_string())?;
+    let mut guard = (&*db)
+        .0
+        .lock()
+        .map_err(|e: std::sync::PoisonError<_>| e.to_string())?;
     let conn = guard.as_mut().ok_or("database not initialized")?;
     delete_memory(conn, memory_id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn cleanup_db(db: State<DbState>) -> Result<String, String> {
-    let mut guard = (&*db).0.lock().map_err(|e: std::sync::PoisonError<_>| e.to_string())?;
+    let mut guard = (&*db)
+        .0
+        .lock()
+        .map_err(|e: std::sync::PoisonError<_>| e.to_string())?;
     let conn = guard.as_mut().ok_or("database not initialized")?;
     cleanup_database(conn).map_err(|e| e.to_string())?;
     Ok("Database cleanup complete".to_string())
@@ -1450,7 +1800,10 @@ fn cleanup_db(db: State<DbState>) -> Result<String, String> {
 /// Clear all data (destructive — use with caution).
 #[tauri::command]
 fn clear_all_data_cmd(db: State<DbState>, data_dir: State<AppDataDir>) -> Result<String, String> {
-    let mut guard = (&*db).0.lock().map_err(|e: std::sync::PoisonError<_>| e.to_string())?;
+    let mut guard = (&*db)
+        .0
+        .lock()
+        .map_err(|e: std::sync::PoisonError<_>| e.to_string())?;
     let conn = guard.as_mut().ok_or("database not initialized")?;
 
     // Clear database tables
@@ -1459,8 +1812,10 @@ fn clear_all_data_cmd(db: State<DbState>, data_dir: State<AppDataDir>) -> Result
     // Remove and recreate the memories folder
     let memories_dir = get_current_data_dir(&data_dir)?.join("memories");
     if memories_dir.exists() {
-        std::fs::remove_dir_all(&memories_dir).map_err(|e| format!("Failed to delete memories folder: {}", e))?;
-        std::fs::create_dir_all(&memories_dir).map_err(|e| format!("Failed to recreate memories folder: {}", e))?;
+        std::fs::remove_dir_all(&memories_dir)
+            .map_err(|e| format!("Failed to delete memories folder: {}", e))?;
+        std::fs::create_dir_all(&memories_dir)
+            .map_err(|e| format!("Failed to recreate memories folder: {}", e))?;
     }
 
     Ok("All data has been cleared".to_string())
@@ -1490,6 +1845,434 @@ const RAG_TOP_K: usize = 6;
 const RAG_MAX_CONTEXT_CHARS: usize = 2800;
 const RAG_MAX_MEMORY_CHARS: usize = 520;
 const RAG_MIN_RELEVANCE_SCORE: f32 = 0.12;
+const TIME_NORMALIZE_AI_MAX_CALLS: usize = 4;
+
+fn is_time_normalization_enabled_for_active_library(app: &tauri::AppHandle) -> bool {
+    let data_dir_state = app.state::<AppDataDir>();
+    let current_dir = match data_dir_state.0.lock() {
+        Ok(guard) => guard.clone(),
+        Err(_) => return false,
+    };
+    load_library_time_normalization(&current_dir)
+}
+
+fn parse_chinese_number_token(token: &str) -> Option<i64> {
+    let trimmed = token.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if let Ok(n) = trimmed.parse::<i64>() {
+        return Some(n);
+    }
+
+    let normalized = trimmed.replace('两', "二");
+    let digit = |ch: char| -> Option<i64> {
+        match ch {
+            '零' => Some(0),
+            '一' => Some(1),
+            '二' => Some(2),
+            '三' => Some(3),
+            '四' => Some(4),
+            '五' => Some(5),
+            '六' => Some(6),
+            '七' => Some(7),
+            '八' => Some(8),
+            '九' => Some(9),
+            _ => None,
+        }
+    };
+
+    if normalized == "十" {
+        return Some(10);
+    }
+
+    if normalized.contains('十') {
+        let mut parts = normalized.split('十');
+        let left = parts.next().unwrap_or_default();
+        let right = parts.next().unwrap_or_default();
+        let tens = if left.is_empty() {
+            1
+        } else if left.chars().count() == 1 {
+            digit(left.chars().next()?)?
+        } else {
+            return None;
+        };
+        let ones = if right.is_empty() {
+            0
+        } else if right.chars().count() == 1 {
+            digit(right.chars().next()?)?
+        } else {
+            return None;
+        };
+        return Some(tens * 10 + ones);
+    }
+
+    let mut value = 0i64;
+    for ch in normalized.chars() {
+        value = value.checked_mul(10)?;
+        value = value.checked_add(digit(ch)?)?;
+    }
+    Some(value)
+}
+
+fn extract_trailing_number_token(text: &str) -> Option<String> {
+    let mut token = String::new();
+    let mut started = false;
+    for ch in text.chars().rev() {
+        let is_num = ch.is_ascii_digit()
+            || matches!(
+                ch,
+                '零' | '一' | '二' | '两' | '三' | '四' | '五' | '六' | '七' | '八' | '九' | '十'
+            );
+        if is_num {
+            token.insert(0, ch);
+            started = true;
+            continue;
+        }
+        if ch.is_whitespace() && !started {
+            continue;
+        }
+        break;
+    }
+    if token.is_empty() {
+        None
+    } else {
+        Some(token)
+    }
+}
+
+fn extract_leading_number_token(text: &str) -> Option<String> {
+    let mut token = String::new();
+    let mut started = false;
+    for ch in text.chars() {
+        let is_num = ch.is_ascii_digit()
+            || matches!(
+                ch,
+                '零' | '一' | '二' | '两' | '三' | '四' | '五' | '六' | '七' | '八' | '九' | '十'
+            );
+        if is_num {
+            token.push(ch);
+            started = true;
+            continue;
+        }
+        if ch.is_whitespace() && !started {
+            continue;
+        }
+        break;
+    }
+    if token.is_empty() {
+        None
+    } else {
+        Some(token)
+    }
+}
+
+fn parse_ymd_from_separated_text(text: &str) -> Option<NaiveDate> {
+    let mut current = String::new();
+    for ch in text.chars() {
+        if ch.is_ascii_digit() || matches!(ch, '-' | '/' | '.') {
+            current.push(ch);
+            continue;
+        }
+        if current.matches('-').count()
+            + current.matches('/').count()
+            + current.matches('.').count()
+            >= 2
+        {
+            let normalized = current.replace('/', "-").replace('.', "-");
+            let parts: Vec<&str> = normalized.split('-').filter(|x| !x.is_empty()).collect();
+            if parts.len() >= 3 {
+                if let (Ok(y), Ok(m), Ok(d)) = (
+                    parts[0].parse::<i32>(),
+                    parts[1].parse::<u32>(),
+                    parts[2].parse::<u32>(),
+                ) {
+                    if (1900..=2200).contains(&y) {
+                        if let Some(date) = NaiveDate::from_ymd_opt(y, m, d) {
+                            return Some(date);
+                        }
+                    }
+                }
+            }
+        }
+        current.clear();
+    }
+    if current.matches('-').count() + current.matches('/').count() + current.matches('.').count()
+        >= 2
+    {
+        let normalized = current.replace('/', "-").replace('.', "-");
+        let parts: Vec<&str> = normalized.split('-').filter(|x| !x.is_empty()).collect();
+        if parts.len() >= 3 {
+            if let (Ok(y), Ok(m), Ok(d)) = (
+                parts[0].parse::<i32>(),
+                parts[1].parse::<u32>(),
+                parts[2].parse::<u32>(),
+            ) {
+                if (1900..=2200).contains(&y) {
+                    return NaiveDate::from_ymd_opt(y, m, d);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn weekday_index_from_char(ch: char) -> Option<i64> {
+    match ch {
+        '一' => Some(0),
+        '二' => Some(1),
+        '三' => Some(2),
+        '四' => Some(3),
+        '五' => Some(4),
+        '六' => Some(5),
+        '日' | '天' => Some(6),
+        _ => None,
+    }
+}
+
+fn week_start_monday(base: NaiveDate) -> NaiveDate {
+    base - ChronoDuration::days(base.weekday().num_days_from_monday() as i64)
+}
+
+fn find_weekday_after_marker(text: &str, marker: &str) -> Option<i64> {
+    let idx = text.find(marker)?;
+    let tail = &text[idx + marker.len()..];
+    for ch in tail.chars() {
+        if ch.is_whitespace() || ch == '的' {
+            continue;
+        }
+        if ch == '末' {
+            return Some(5);
+        }
+        return weekday_index_from_char(ch);
+    }
+    None
+}
+
+fn parse_date_from_time_text_rule(text: &str, reference: NaiveDate) -> Option<NaiveDate> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    if trimmed.contains("今天") {
+        return Some(reference);
+    }
+    if trimmed.contains("明天") {
+        return Some(reference + ChronoDuration::days(1));
+    }
+    if trimmed.contains("后天") {
+        return Some(reference + ChronoDuration::days(2));
+    }
+
+    for marker in ["天之后", "日之后", "天后", "日后"] {
+        if let Some(pos) = trimmed.find(marker) {
+            let token = extract_trailing_number_token(&trimmed[..pos])?;
+            let offset = parse_chinese_number_token(&token)?;
+            if (0..=365).contains(&offset) {
+                return Some(reference + ChronoDuration::days(offset));
+            }
+        }
+    }
+
+    if let Some(date) = parse_ymd_from_separated_text(trimmed) {
+        return Some(date);
+    }
+
+    if trimmed.contains('年') && trimmed.contains('月') {
+        if let (Some(pos_year), Some(pos_month)) = (trimmed.find('年'), trimmed.find('月')) {
+            let year_token = extract_trailing_number_token(&trimmed[..pos_year])?;
+            let month_token = extract_trailing_number_token(&trimmed[..pos_month])?;
+            let day_token = if let Some(pos_day) = trimmed.find('日') {
+                extract_trailing_number_token(&trimmed[..pos_day])
+            } else {
+                extract_leading_number_token(&trimmed[pos_month + '月'.len_utf8()..])
+            }?;
+            let year = parse_chinese_number_token(&year_token)? as i32;
+            let month = parse_chinese_number_token(&month_token)? as u32;
+            let day = parse_chinese_number_token(&day_token)? as u32;
+            if (1900..=2200).contains(&year) {
+                if let Some(date) = NaiveDate::from_ymd_opt(year, month, day) {
+                    return Some(date);
+                }
+            }
+        }
+    }
+
+    if let Some(pos_month) = trimmed.find('月') {
+        let month_token = extract_trailing_number_token(&trimmed[..pos_month])?;
+        let day_token = if let Some(pos_day) = trimmed.find('日') {
+            extract_trailing_number_token(&trimmed[..pos_day])
+        } else {
+            extract_leading_number_token(&trimmed[pos_month + '月'.len_utf8()..])
+        }?;
+        let month = parse_chinese_number_token(&month_token)? as u32;
+        let day = parse_chinese_number_token(&day_token)? as u32;
+        let mut year = reference.year();
+        let mut date = NaiveDate::from_ymd_opt(year, month, day)?;
+        if date < reference {
+            year += 1;
+            date = NaiveDate::from_ymd_opt(year, month, day)?;
+        }
+        return Some(date);
+    }
+
+    if let Some(weekday) = find_weekday_after_marker(trimmed, "下周")
+        .or_else(|| find_weekday_after_marker(trimmed, "下星期"))
+    {
+        let monday = week_start_monday(reference);
+        return Some(monday + ChronoDuration::days(7 + weekday));
+    }
+
+    if let Some(weekday) = find_weekday_after_marker(trimmed, "本周")
+        .or_else(|| find_weekday_after_marker(trimmed, "这周"))
+    {
+        let monday = week_start_monday(reference);
+        let mut date = monday + ChronoDuration::days(weekday);
+        if date < reference {
+            date += ChronoDuration::days(7);
+        }
+        return Some(date);
+    }
+
+    if let Some(weekday) = find_weekday_after_marker(trimmed, "周") {
+        let monday = week_start_monday(reference);
+        let mut date = monday + ChronoDuration::days(weekday);
+        if date < reference {
+            date += ChronoDuration::days(7);
+        }
+        return Some(date);
+    }
+
+    None
+}
+
+fn parse_iso_date_from_string(text: &str) -> Option<NaiveDate> {
+    let trimmed = text.trim();
+    let date_part = if trimmed.len() >= 10 {
+        &trimmed[..10]
+    } else {
+        trimmed
+    };
+    let parts: Vec<&str> = date_part.split('-').collect();
+    if parts.len() != 3 {
+        return None;
+    }
+    let year = parts[0].parse::<i32>().ok()?;
+    let month = parts[1].parse::<u32>().ok()?;
+    let day = parts[2].parse::<u32>().ok()?;
+    NaiveDate::from_ymd_opt(year, month, day)
+}
+
+fn normalize_time_text_with_model(
+    config: &ModelConfig,
+    reference: NaiveDate,
+    time_text: &str,
+) -> Option<NaiveDate> {
+    let prompt = format!(
+        "你是时间解析器。参考日期是 {ref_date}。\n\
+请把输入时间表达转换为公历日期 YYYY-MM-DD。\n\
+如果无法确定具体日期，date 必须是 null。\n\
+只输出 JSON：{{\"date\":\"YYYY-MM-DD\"|null}}\n\
+输入：{input}",
+        ref_date = reference.format("%Y-%m-%d"),
+        input = time_text.trim()
+    );
+    let response = call_model_simple(config, &prompt).ok()?;
+    let json = extract_json_block(&response)?;
+    let value: serde_json::Value = serde_json::from_str(json).ok()?;
+    let date_str = value.get("date").and_then(|x| x.as_str())?;
+    parse_iso_date_from_string(date_str)
+}
+
+fn normalize_time_entities_in_place(
+    entities: &mut Vec<ExtractedEntity>,
+    relations: &mut Vec<ExtractedRelation>,
+    config: &ModelConfig,
+    reference: NaiveDate,
+) {
+    let mut rename_map: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    let mut cache: std::collections::HashMap<String, Option<(String, &'static str)>> =
+        std::collections::HashMap::new();
+    let mut ai_calls = 0usize;
+
+    for entity in entities.iter_mut() {
+        if !entity.entity_type.eq_ignore_ascii_case("time") {
+            continue;
+        }
+        let original_name = entity.name.trim().to_string();
+        if original_name.is_empty() {
+            continue;
+        }
+
+        let cached = cache.get(&original_name).cloned();
+        let normalized = if let Some(hit) = cached {
+            hit
+        } else {
+            let mut resolved = parse_date_from_time_text_rule(&original_name, reference)
+                .map(|d| (d.format("%Y-%m-%d").to_string(), "rule"));
+            if resolved.is_none() && ai_calls < TIME_NORMALIZE_AI_MAX_CALLS {
+                ai_calls += 1;
+                resolved = normalize_time_text_with_model(config, reference, &original_name)
+                    .map(|d| (d.format("%Y-%m-%d").to_string(), "model"));
+            }
+            cache.insert(original_name.clone(), resolved.clone());
+            resolved
+        };
+
+        let Some((normalized_name, method)) = normalized else {
+            continue;
+        };
+        if normalized_name == original_name {
+            continue;
+        }
+
+        rename_map.insert(original_name.clone(), normalized_name.clone());
+
+        let mut attrs = serde_json::Map::new();
+        if let Some(existing) = entity.attributes.take() {
+            if let Some(obj) = existing.as_object() {
+                for (k, v) in obj {
+                    attrs.insert(k.clone(), v.clone());
+                }
+            } else {
+                attrs.insert("raw_attributes".to_string(), existing);
+            }
+        }
+        attrs
+            .entry("original_time_text".to_string())
+            .or_insert(serde_json::Value::String(original_name));
+        attrs.insert(
+            "normalized_date".to_string(),
+            serde_json::Value::String(normalized_name.clone()),
+        );
+        attrs.insert(
+            "normalized_by".to_string(),
+            serde_json::Value::String(method.to_string()),
+        );
+        attrs.insert(
+            "reference_date".to_string(),
+            serde_json::Value::String(reference.format("%Y-%m-%d").to_string()),
+        );
+
+        entity.name = normalized_name;
+        entity.attributes = Some(serde_json::Value::Object(attrs));
+    }
+
+    if rename_map.is_empty() {
+        return;
+    }
+
+    for relation in relations.iter_mut() {
+        if let Some(new_from) = rename_map.get(&relation.from) {
+            relation.from = new_from.clone();
+        }
+        if let Some(new_to) = rename_map.get(&relation.to) {
+            relation.to = new_to.clone();
+        }
+    }
+}
 
 fn is_cjk_char(ch: char) -> bool {
     matches!(
@@ -1652,8 +2435,7 @@ fn collect_relevant_historical_memories(
     let mut budget_left = RAG_MAX_CONTEXT_CHARS;
 
     for (score, token_overlap, entity_hits, content) in scored.into_iter().take(RAG_TOP_K) {
-        let is_relevant =
-            score >= RAG_MIN_RELEVANCE_SCORE || entity_hits > 0 || token_overlap >= 2;
+        let is_relevant = score >= RAG_MIN_RELEVANCE_SCORE || entity_hits > 0 || token_overlap >= 2;
         if !is_relevant {
             continue;
         }
@@ -1692,7 +2474,12 @@ fn do_answer_question(
     if question.is_empty() {
         return Ok(String::new());
     }
-    if let ModelProvider::Ollama { base_url, model_name, .. } = &config.provider {
+    if let ModelProvider::Ollama {
+        base_url,
+        model_name,
+        ..
+    } = &config.provider
+    {
         ensure_ollama_running(base_url)?;
         ensure_model_available(base_url, model_name)?;
     }
@@ -1714,8 +2501,10 @@ fn do_answer_question(
     // Keep DB lock scope minimal so long model calls don't block other commands.
     let memories = {
         let db = app.state::<DbState>();
-        let mut guard =
-            (&*db).0.lock().map_err(|e: std::sync::PoisonError<_>| e.to_string())?;
+        let mut guard = (&*db)
+            .0
+            .lock()
+            .map_err(|e: std::sync::PoisonError<_>| e.to_string())?;
         let conn = guard.as_mut().ok_or("database not initialized")?;
 
         if let Some(name) = entity_name {
@@ -1834,16 +2623,18 @@ fn read_string_array(value: &serde_json::Value, keys: &[&str]) -> Vec<String> {
 }
 
 fn parse_story_generation_response(response: &str) -> Result<StoryGenerationResult, String> {
-    let json_str = extract_json_block(response).ok_or("Could not extract JSON output from model response")?;
-    let value: serde_json::Value = serde_json::from_str(json_str)
-        .map_err(|e| format!("Failed to parse story JSON: {e}"))?;
+    let json_str =
+        extract_json_block(response).ok_or("Could not extract JSON output from model response")?;
+    let value: serde_json::Value =
+        serde_json::from_str(json_str).map_err(|e| format!("Failed to parse story JSON: {e}"))?;
 
     let title = read_optional_string(&value, &["title"]).unwrap_or_default();
-    let premise = read_optional_string(&value, &["premise", "summary", "logline"]).unwrap_or_default();
+    let premise =
+        read_optional_string(&value, &["premise", "summary", "logline"]).unwrap_or_default();
     let outline = read_string_array(&value, &["outline", "story_outline"]);
     let continuity_checks = read_string_array(&value, &["continuity_checks", "checks"]);
-    let first_chapter = read_optional_string(&value, &["first_chapter", "chapter1", "opening"])
-        .unwrap_or_default();
+    let first_chapter =
+        read_optional_string(&value, &["first_chapter", "chapter1", "opening"]).unwrap_or_default();
 
     let chapter_items = value
         .get("chapter_plan")
@@ -1884,14 +2675,23 @@ fn parse_story_generation_response(response: &str) -> Result<StoryGenerationResu
 }
 
 fn collect_story_prompt_context(db: &State<DbState>) -> Result<StoryPromptContext, String> {
-    let mut guard = (&**db).0.lock().map_err(|e: std::sync::PoisonError<_>| e.to_string())?;
+    let mut guard = (&**db)
+        .0
+        .lock()
+        .map_err(|e: std::sync::PoisonError<_>| e.to_string())?;
     let conn = guard.as_mut().ok_or("database not initialized")?;
 
     let memories = list_memories(conn)
         .map_err(|e| e.to_string())?
         .into_iter()
         .take(12)
-        .map(|m| format!("[{}] {}", m.created_at, truncate_for_prompt(m.content.trim(), 150)))
+        .map(|m| {
+            format!(
+                "[{}] {}",
+                m.created_at,
+                truncate_for_prompt(m.content.trim(), 150)
+            )
+        })
         .collect::<Vec<_>>();
 
     let graph = get_graph_data(conn).map_err(|e| e.to_string())?;
@@ -1930,7 +2730,10 @@ fn clamp_chapter_count(chapter_count: Option<usize>) -> usize {
     chapter_count.unwrap_or(10).clamp(3, 24)
 }
 
-fn infer_key_events_from_context(context: &StoryPromptContext, chapter_count: usize) -> Vec<String> {
+fn infer_key_events_from_context(
+    context: &StoryPromptContext,
+    chapter_count: usize,
+) -> Vec<String> {
     let target_len = chapter_count.clamp(3, 12);
     let mut inferred = Vec::new();
 
@@ -1964,8 +2767,16 @@ fn build_story_prompt(request: &StoryGenerationRequest, context: &StoryPromptCon
         .unwrap_or(true);
 
     let target_language = if is_zh { "中文" } else { "English" };
-    let default_genre = if is_zh { "不限（可自动判断）" } else { "Unspecified (infer from events)" };
-    let default_style = if is_zh { "叙事清晰、人物驱动" } else { "Clear narrative, character-driven" };
+    let default_genre = if is_zh {
+        "不限（可自动判断）"
+    } else {
+        "Unspecified (infer from events)"
+    };
+    let default_style = if is_zh {
+        "叙事清晰、人物驱动"
+    } else {
+        "Clear narrative, character-driven"
+    };
     let default_protagonist = if is_zh { "未指定" } else { "Not specified" };
     let default_constraints = if is_zh { "无" } else { "None" };
 
@@ -1978,25 +2789,37 @@ fn build_story_prompt(request: &StoryGenerationRequest, context: &StoryPromptCon
         .join("\n");
 
     let memory_context = if context.memories.is_empty() {
-        if is_zh { "（暂无历史记忆）".to_string() } else { "(No historical memories)".to_string() }
+        if is_zh {
+            "（暂无历史记忆）".to_string()
+        } else {
+            "(No historical memories)".to_string()
+        }
     } else {
         context.memories.join("\n")
     };
 
     let entity_context = if context.entities.is_empty() {
-        if is_zh { "（暂无实体）".to_string() } else { "(No entities)".to_string() }
+        if is_zh {
+            "（暂无实体）".to_string()
+        } else {
+            "(No entities)".to_string()
+        }
     } else {
         context.entities.join("、")
     };
 
     let relation_context = if context.relations.is_empty() {
-        if is_zh { "（暂无关系）".to_string() } else { "(No relations)".to_string() }
+        if is_zh {
+            "（暂无关系）".to_string()
+        } else {
+            "(No relations)".to_string()
+        }
     } else {
         context.relations.join("\n")
     };
 
     format!(
-r#"你是一位专业小说策划与写作助手。请根据用户给出的关键事件，补全为可直接开写的故事方案。
+        r#"你是一位专业小说策划与写作助手。请根据用户给出的关键事件，补全为可直接开写的故事方案。
 
 硬性要求：
 1. 必须保留并覆盖所有关键事件，不可删除或篡改核心事实。
@@ -2045,8 +2868,14 @@ r#"你是一位专业小说策划与写作助手。请根据用户给出的关�
 "#,
         target_language = target_language,
         chapter_count = clamp_chapter_count(request.chapter_count),
-        genre = request.genre.clone().unwrap_or_else(|| default_genre.to_string()),
-        style = request.style.clone().unwrap_or_else(|| default_style.to_string()),
+        genre = request
+            .genre
+            .clone()
+            .unwrap_or_else(|| default_genre.to_string()),
+        style = request
+            .style
+            .clone()
+            .unwrap_or_else(|| default_style.to_string()),
         protagonist = request
             .protagonist
             .clone()
@@ -2062,7 +2891,10 @@ r#"你是一位专业小说策划与写作助手。请根据用户给出的关�
     )
 }
 
-fn build_story_continue_prompt(request: &StoryContinuationRequest, target_chapter: usize) -> String {
+fn build_story_continue_prompt(
+    request: &StoryContinuationRequest,
+    target_chapter: usize,
+) -> String {
     let is_zh = request
         .language
         .as_deref()
@@ -2070,17 +2902,25 @@ fn build_story_continue_prompt(request: &StoryContinuationRequest, target_chapte
         .unwrap_or(true);
 
     let target_language = if is_zh { "中文" } else { "English" };
-    let style = request
-        .style
-        .clone()
-        .unwrap_or_else(|| if is_zh { "保持与前文一致" } else { "Keep style consistent with previous chapters" }.to_string());
+    let style = request.style.clone().unwrap_or_else(|| {
+        if is_zh {
+            "保持与前文一致"
+        } else {
+            "Keep style consistent with previous chapters"
+        }
+        .to_string()
+    });
     let constraints = request
         .constraints
         .clone()
         .unwrap_or_else(|| if is_zh { "无" } else { "None" }.to_string());
 
     let outline_text = if request.outline.is_empty() {
-        if is_zh { "（未提供）".to_string() } else { "(Not provided)".to_string() }
+        if is_zh {
+            "（未提供）".to_string()
+        } else {
+            "(Not provided)".to_string()
+        }
     } else {
         request
             .outline
@@ -2092,7 +2932,11 @@ fn build_story_continue_prompt(request: &StoryContinuationRequest, target_chapte
     };
 
     let plan_text = if request.chapter_plan.is_empty() {
-        if is_zh { "（未提供章节计划）".to_string() } else { "(No chapter plan provided)".to_string() }
+        if is_zh {
+            "（未提供章节计划）".to_string()
+        } else {
+            "(No chapter plan provided)".to_string()
+        }
     } else {
         request
             .chapter_plan
@@ -2108,13 +2952,21 @@ fn build_story_continue_prompt(request: &StoryContinuationRequest, target_chapte
     };
 
     let checks_text = if request.continuity_checks.is_empty() {
-        if is_zh { "（无）".to_string() } else { "(None)".to_string() }
+        if is_zh {
+            "（无）".to_string()
+        } else {
+            "(None)".to_string()
+        }
     } else {
         request.continuity_checks.join("\n")
     };
 
     let written_text = if request.written_chapters.is_empty() {
-        if is_zh { "（尚无正文）".to_string() } else { "(No written chapters yet)".to_string() }
+        if is_zh {
+            "（尚无正文）".to_string()
+        } else {
+            "(No written chapters yet)".to_string()
+        }
     } else {
         request
             .written_chapters
@@ -2123,7 +2975,15 @@ fn build_story_continue_prompt(request: &StoryContinuationRequest, target_chapte
                 format!(
                     "第{}章《{}》\n{}\n",
                     c.chapter,
-                    if c.title.trim().is_empty() { if is_zh { "未命名" } else { "Untitled" } } else { c.title.as_str() },
+                    if c.title.trim().is_empty() {
+                        if is_zh {
+                            "未命名"
+                        } else {
+                            "Untitled"
+                        }
+                    } else {
+                        c.title.as_str()
+                    },
                     truncate_for_prompt(&c.content, 2600)
                 )
             })
@@ -2132,7 +2992,7 @@ fn build_story_continue_prompt(request: &StoryContinuationRequest, target_chapte
     };
 
     format!(
-r#"你是长篇小说续写助手。请基于现有设定与已写内容，续写下一章。
+        r#"你是长篇小说续写助手。请基于现有设定与已写内容，续写下一章。
 
 硬性要求：
 1. 不能推翻已写章节事实。
@@ -2192,10 +3052,14 @@ fn build_story_rewrite_prompt(
         .unwrap_or(true);
 
     let target_language = if is_zh { "中文" } else { "English" };
-    let style = request
-        .style
-        .clone()
-        .unwrap_or_else(|| if is_zh { "保持全书一致风格" } else { "Keep style consistent across the story" }.to_string());
+    let style = request.style.clone().unwrap_or_else(|| {
+        if is_zh {
+            "保持全书一致风格"
+        } else {
+            "Keep style consistent across the story"
+        }
+        .to_string()
+    });
     let constraints = request
         .constraints
         .clone()
@@ -2205,10 +3069,18 @@ fn build_story_rewrite_prompt(
         .as_ref()
         .map(|x| x.trim())
         .filter(|x| !x.is_empty())
-        .unwrap_or(if is_zh { "在不改变主线事实的前提下，优化节奏、冲突和表达。" } else { "Improve pacing, conflict, and writing quality without changing core facts." });
+        .unwrap_or(if is_zh {
+            "在不改变主线事实的前提下，优化节奏、冲突和表达。"
+        } else {
+            "Improve pacing, conflict, and writing quality without changing core facts."
+        });
 
     let outline_text = if request.outline.is_empty() {
-        if is_zh { "（未提供）".to_string() } else { "(Not provided)".to_string() }
+        if is_zh {
+            "（未提供）".to_string()
+        } else {
+            "(Not provided)".to_string()
+        }
     } else {
         request
             .outline
@@ -2220,7 +3092,11 @@ fn build_story_rewrite_prompt(
     };
 
     let plan_text = if request.chapter_plan.is_empty() {
-        if is_zh { "（未提供章节计划）".to_string() } else { "(No chapter plan provided)".to_string() }
+        if is_zh {
+            "（未提供章节计划）".to_string()
+        } else {
+            "(No chapter plan provided)".to_string()
+        }
     } else {
         request
             .chapter_plan
@@ -2236,7 +3112,11 @@ fn build_story_rewrite_prompt(
     };
 
     let checks_text = if request.continuity_checks.is_empty() {
-        if is_zh { "（无）".to_string() } else { "(None)".to_string() }
+        if is_zh {
+            "（无）".to_string()
+        } else {
+            "(None)".to_string()
+        }
     } else {
         request.continuity_checks.join("\n")
     };
@@ -2249,14 +3129,21 @@ fn build_story_rewrite_prompt(
                 "第{}章《{}》\n{}",
                 c.chapter,
                 c.title,
-                truncate_for_prompt(&c.content, if c.chapter == target.chapter { 3200 } else { 1200 })
+                truncate_for_prompt(
+                    &c.content,
+                    if c.chapter == target.chapter {
+                        3200
+                    } else {
+                        1200
+                    }
+                )
             )
         })
         .collect::<Vec<_>>()
         .join("\n\n---\n\n");
 
     format!(
-r#"你是小说编辑助手。请根据修改意见，重写指定章节。
+        r#"你是小说编辑助手。请根据修改意见，重写指定章节。
 
 硬性要求：
 1. 只能重写目标章节，不要改动其他章节事实。
@@ -2313,8 +3200,12 @@ r#"你是小说编辑助手。请根据修改意见，重写指定章节。
     )
 }
 
-fn parse_story_continuation_response(response: &str, target_chapter: usize) -> Result<StoryContinuationResult, String> {
-    let json_str = extract_json_block(response).ok_or("Could not extract JSON output from model response")?;
+fn parse_story_continuation_response(
+    response: &str,
+    target_chapter: usize,
+) -> Result<StoryContinuationResult, String> {
+    let json_str =
+        extract_json_block(response).ok_or("Could not extract JSON output from model response")?;
     let value: serde_json::Value = serde_json::from_str(json_str)
         .map_err(|e| format!("Failed to parse continuation JSON: {e}"))?;
 
@@ -2327,7 +3218,8 @@ fn parse_story_continuation_response(response: &str, target_chapter: usize) -> R
     Ok(StoryContinuationResult {
         chapter,
         title: read_optional_string(&value, &["title"]).unwrap_or_default(),
-        content: read_optional_string(&value, &["content", "chapter_text", "text"]).unwrap_or_default(),
+        content: read_optional_string(&value, &["content", "chapter_text", "text"])
+            .unwrap_or_default(),
         summary: read_optional_string(&value, &["summary", "chapter_summary"]).unwrap_or_default(),
     })
 }
@@ -2353,14 +3245,20 @@ fn generate_story_from_events(
 
     let config = config_state.0.lock().map_err(|e| e.to_string())?.clone();
 
-    if let ModelProvider::Ollama { base_url, model_name, .. } = &config.provider {
+    if let ModelProvider::Ollama {
+        base_url,
+        model_name,
+        ..
+    } = &config.provider
+    {
         ensure_ollama_running(base_url)?;
         ensure_model_available(base_url, model_name)?;
     }
 
     let context = collect_story_prompt_context(&db)?;
     if request.key_events.is_empty() {
-        request.key_events = infer_key_events_from_context(&context, clamp_chapter_count(request.chapter_count));
+        request.key_events =
+            infer_key_events_from_context(&context, clamp_chapter_count(request.chapter_count));
     }
     if request.key_events.is_empty() {
         return Err(if is_zh {
@@ -2423,7 +3321,12 @@ fn continue_story_chapter(
     config_state: State<ModelConfigState>,
 ) -> Result<StoryContinuationResult, String> {
     let config = config_state.0.lock().map_err(|e| e.to_string())?.clone();
-    if let ModelProvider::Ollama { base_url, model_name, .. } = &config.provider {
+    if let ModelProvider::Ollama {
+        base_url,
+        model_name,
+        ..
+    } = &config.provider
+    {
         ensure_ollama_running(base_url)?;
         ensure_model_available(base_url, model_name)?;
     }
@@ -2490,10 +3393,20 @@ fn rewrite_story_chapter(
         .iter()
         .find(|x| x.chapter == request.target_chapter)
         .cloned()
-        .ok_or_else(|| format!("Chapter {} not found in written chapters.", request.target_chapter))?;
+        .ok_or_else(|| {
+            format!(
+                "Chapter {} not found in written chapters.",
+                request.target_chapter
+            )
+        })?;
 
     let config = config_state.0.lock().map_err(|e| e.to_string())?.clone();
-    if let ModelProvider::Ollama { base_url, model_name, .. } = &config.provider {
+    if let ModelProvider::Ollama {
+        base_url,
+        model_name,
+        ..
+    } = &config.provider
+    {
         ensure_ollama_running(base_url)?;
         ensure_model_available(base_url, model_name)?;
     }
@@ -2622,23 +3535,43 @@ fn emit_save_progress(app: &tauri::AppHandle, code: &str, status: &str, params: 
 
 /// Helper: emit a setup-done event to the frontend.
 fn emit_setup_done(app: &tauri::AppHandle, success: bool) {
-    let _ = app.emit("ollama-setup-done", serde_json::json!({ "success": success }));
+    let _ = app.emit(
+        "ollama-setup-done",
+        serde_json::json!({ "success": success }),
+    );
 }
 
 /// Blocking body of Ollama one-click setup: check install → start service → pull model.
-fn do_ollama_setup(app: tauri::AppHandle, base_url: String, model_name: String, extract_model_name: String) {
+fn do_ollama_setup(
+    app: tauri::AppHandle,
+    base_url: String,
+    model_name: String,
+    extract_model_name: String,
+) {
     // Step 1: Check if Ollama is installed
     emit_setup_log(&app, "Checking Ollama installation...", "running");
 
     if !ollama::check_ollama_installed() {
-        emit_setup_log(&app, "Ollama not found. Downloading installer...", "running");
+        emit_setup_log(
+            &app,
+            "Ollama not found. Downloading installer...",
+            "running",
+        );
         match ollama_installer::download_and_open_ollama_installer() {
             Ok(msg) => {
                 emit_setup_log(&app, &format!("✅ {}", msg), "success");
-                emit_setup_log(&app, "⚠️ Please complete the Ollama installation and click [Initialize] again", "warning");
+                emit_setup_log(
+                    &app,
+                    "⚠️ Please complete the Ollama installation and click [Initialize] again",
+                    "warning",
+                );
             }
             Err(e) => {
-                emit_setup_log(&app, &format!("❌ Failed to download installer: {}", e), "error");
+                emit_setup_log(
+                    &app,
+                    &format!("❌ Failed to download installer: {}", e),
+                    "error",
+                );
             }
         }
         emit_setup_done(&app, false);
@@ -2650,11 +3583,22 @@ fn do_ollama_setup(app: tauri::AppHandle, base_url: String, model_name: String, 
     emit_setup_log(&app, "Checking Ollama service status...", "running");
     let (running, _) = ollama::check_ollama_status(&base_url);
     if !running {
-        emit_setup_log(&app, "Ollama service is not running. Starting...", "running");
+        emit_setup_log(
+            &app,
+            "Ollama service is not running. Starting...",
+            "running",
+        );
         match ollama::ensure_ollama_running(&base_url) {
             Ok(_) => emit_setup_log(&app, "✅ Ollama service started", "success"),
             Err(e) => {
-                emit_setup_log(&app, &format!("❌ Failed to start service: {}. Please start Ollama manually and retry.", e), "error");
+                emit_setup_log(
+                    &app,
+                    &format!(
+                        "❌ Failed to start service: {}. Please start Ollama manually and retry.",
+                        e
+                    ),
+                    "error",
+                );
                 emit_setup_done(&app, false);
                 return;
             }
@@ -2670,19 +3614,30 @@ fn do_ollama_setup(app: tauri::AppHandle, base_url: String, model_name: String, 
     }
 
     for (model, label) in &models {
-        emit_setup_log(&app, &format!("Checking {} model {}...", label, model), "running");
+        emit_setup_log(
+            &app,
+            &format!("Checking {} model {}...", label, model),
+            "running",
+        );
         if ollama::check_model_exists(&base_url, model) {
             emit_setup_log(&app, &format!("✅ Model {} is ready", model), "success");
         } else {
             emit_setup_log(
                 &app,
-                &format!("Downloading {} model {} (this may take a few minutes)...", label, model),
+                &format!(
+                    "Downloading {} model {} (this may take a few minutes)...",
+                    label, model
+                ),
                 "running",
             );
             match ollama::pull_model(&base_url, model) {
                 Ok(_) => emit_setup_log(&app, &format!("✅ Model {} downloaded", model), "success"),
                 Err(e) => {
-                    emit_setup_log(&app, &format!("❌ Failed to download model {}: {}", model, e), "error");
+                    emit_setup_log(
+                        &app,
+                        &format!("❌ Failed to download model {}: {}", model, e),
+                        "error",
+                    );
                     emit_setup_done(&app, false);
                     return;
                 }
@@ -2690,7 +3645,11 @@ fn do_ollama_setup(app: tauri::AppHandle, base_url: String, model_name: String, 
         }
     }
 
-    emit_setup_log(&app, "🎉 Ollama setup complete! Everything is ready.", "success");
+    emit_setup_log(
+        &app,
+        "🎉 Ollama setup complete! Everything is ready.",
+        "success",
+    );
     emit_setup_done(&app, true);
 }
 
@@ -2706,10 +3665,21 @@ async fn run_ollama_setup(
     };
 
     let (base_url, model_name, extract_model_name) = match &config.provider {
-        ModelProvider::Ollama { base_url, model_name, extract_model_name } => {
-            (base_url.clone(), model_name.clone(), extract_model_name.clone())
+        ModelProvider::Ollama {
+            base_url,
+            model_name,
+            extract_model_name,
+        } => (
+            base_url.clone(),
+            model_name.clone(),
+            extract_model_name.clone(),
+        ),
+        _ => {
+            return Err(
+                "Ollama provider is not configured. Please select Ollama in Settings first."
+                    .to_string(),
+            )
         }
-        _ => return Err("Ollama provider is not configured. Please select Ollama in Settings first.".to_string()),
     };
 
     tokio::task::spawn_blocking(move || {
@@ -2743,14 +3713,20 @@ pub fn run() {
             if !default_library_dir.exists() {
                 ensure_library_structure(&default_library_dir)?;
                 // Preserve existing single-library data by moving it into the default library.
-                move_path_if_exists(&legacy_db_path, &default_library_dir.join("database").join("kraph.db"))?;
+                move_path_if_exists(
+                    &legacy_db_path,
+                    &default_library_dir.join("database").join("kraph.db"),
+                )?;
                 move_path_if_exists(&legacy_memories_dir, &default_library_dir.join("memories"))?;
-                move_path_if_exists(&legacy_model_config, &default_library_dir.join("model_config.json"))?;
-                let _ = save_library_meta(&default_library_dir, "Default");
+                move_path_if_exists(
+                    &legacy_model_config,
+                    &default_library_dir.join("model_config.json"),
+                )?;
+                let _ = save_library_meta(&default_library_dir, "Default", Some(false));
             }
 
-            let mut current_library_id =
-                read_saved_current_library_id(&app_data_dir).unwrap_or_else(|| default_library_id.clone());
+            let mut current_library_id = read_saved_current_library_id(&app_data_dir)
+                .unwrap_or_else(|| default_library_id.clone());
             if !libraries_root_dir.join(&current_library_id).exists() {
                 current_library_id = default_library_id.clone();
             }
