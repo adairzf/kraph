@@ -3,7 +3,7 @@
 use crate::model_config::{ModelConfig, ModelProvider};
 use crate::ollama::{ExtractedData, FusedKnowledge};
 use serde_json::json;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Minimum output token budget for entity extraction.
 /// Extraction produces large JSON objects; too small a budget causes truncated, unparseable output.
@@ -81,6 +81,7 @@ pub fn call_model_fusion(
     historical_memories: &[String],
     new_memory: &str,
 ) -> Result<FusedKnowledge, String> {
+    let fusion_started = Instant::now();
     let historical_text = if historical_memories.is_empty() {
         "(no historical memories)".to_string()
     } else {
@@ -94,6 +95,21 @@ pub fn call_model_fusion(
 
     let full_prompt = format!("{}{}\n\nNew memory:\n{}", prompt, historical_text, new_memory);
     let max_tokens = config.max_tokens.max(FUSION_MIN_TOKENS);
+    let historical_chars: usize = historical_memories.iter().map(|x| x.chars().count()).sum();
+    let provider_name = match &config.provider {
+        ModelProvider::Ollama { .. } => "ollama",
+        ModelProvider::DeepSeek { .. } => "deepseek",
+        ModelProvider::OpenAI { .. } => "openai-compatible",
+    };
+    println!(
+        "🧠 [fusion] start provider={} memories={} historical_chars={} new_chars={} prompt_chars={} max_tokens={}",
+        provider_name,
+        historical_memories.len(),
+        historical_chars,
+        new_memory.chars().count(),
+        full_prompt.chars().count(),
+        max_tokens
+    );
 
     match &config.provider {
         ModelProvider::Ollama {
@@ -101,48 +117,104 @@ pub fn call_model_fusion(
             model_name,
             ..
         } => {
-            call_ollama_api(base_url, model_name, &full_prompt, max_tokens)
-                .and_then(|response| parse_fused_knowledge(&response))
+            let api_started = Instant::now();
+            let response = call_ollama_api(base_url, model_name, &full_prompt, max_tokens)?;
+            println!(
+                "⏱️ [fusion] ollama api call took {} ms (response_chars={})",
+                api_started.elapsed().as_millis(),
+                response.chars().count()
+            );
+
+            let parse_started = Instant::now();
+            let parsed = parse_fused_knowledge(&response)?;
+            println!(
+                "⏱️ [fusion] parse took {} ms (entities={}, relations={}, aliases={})",
+                parse_started.elapsed().as_millis(),
+                parsed.entities.len(),
+                parsed.relations.len(),
+                parsed.aliases.len()
+            );
+            println!(
+                "⏱️ [fusion] total took {} ms",
+                fusion_started.elapsed().as_millis()
+            );
+            Ok(parsed)
         }
         ModelProvider::DeepSeek {
             api_key,
             base_url,
             model_name,
         } => {
-            call_openai_compatible_api(
+            let api_started = Instant::now();
+            let (response, truncated) = call_openai_compatible_api(
                 base_url,
                 api_key,
                 model_name,
                 &full_prompt,
                 config.temperature,
                 max_tokens,
-            )
-            .and_then(|(response, truncated)| {
-                if truncated {
-                    println!("⚠️ [fusion] DeepSeek response truncated, attempting partial parse");
-                }
-                parse_fused_knowledge(&response)
-            })
+            )?;
+            println!(
+                "⏱️ [fusion] deepseek api call took {} ms (response_chars={}, truncated={})",
+                api_started.elapsed().as_millis(),
+                response.chars().count(),
+                truncated
+            );
+            if truncated {
+                println!("⚠️ [fusion] DeepSeek response truncated, attempting partial parse");
+            }
+            let parse_started = Instant::now();
+            let parsed = parse_fused_knowledge(&response)?;
+            println!(
+                "⏱️ [fusion] parse took {} ms (entities={}, relations={}, aliases={})",
+                parse_started.elapsed().as_millis(),
+                parsed.entities.len(),
+                parsed.relations.len(),
+                parsed.aliases.len()
+            );
+            println!(
+                "⏱️ [fusion] total took {} ms",
+                fusion_started.elapsed().as_millis()
+            );
+            Ok(parsed)
         }
         ModelProvider::OpenAI {
             api_key,
             base_url,
             model_name,
         } => {
-            call_openai_compatible_api(
+            let api_started = Instant::now();
+            let (response, truncated) = call_openai_compatible_api(
                 base_url,
                 api_key,
                 model_name,
                 &full_prompt,
                 config.temperature,
                 max_tokens,
-            )
-            .and_then(|(response, truncated)| {
-                if truncated {
-                    println!("⚠️ [fusion] API response truncated, attempting partial parse");
-                }
-                parse_fused_knowledge(&response)
-            })
+            )?;
+            println!(
+                "⏱️ [fusion] openai-compatible api call took {} ms (response_chars={}, truncated={})",
+                api_started.elapsed().as_millis(),
+                response.chars().count(),
+                truncated
+            );
+            if truncated {
+                println!("⚠️ [fusion] API response truncated, attempting partial parse");
+            }
+            let parse_started = Instant::now();
+            let parsed = parse_fused_knowledge(&response)?;
+            println!(
+                "⏱️ [fusion] parse took {} ms (entities={}, relations={}, aliases={})",
+                parse_started.elapsed().as_millis(),
+                parsed.entities.len(),
+                parsed.relations.len(),
+                parsed.aliases.len()
+            );
+            println!(
+                "⏱️ [fusion] total took {} ms",
+                fusion_started.elapsed().as_millis()
+            );
+            Ok(parsed)
         }
     }
 }

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { getModelConfig } from '../utils/tauriApi'
 import { useI18n } from 'vue-i18n'
 
@@ -8,8 +8,17 @@ const { t } = useI18n()
 const loading = ref(false)
 const currentModel = ref('')
 
+function onModelConfigChanged() {
+  void loadCurrentModel()
+}
+
 onMounted(async () => {
   await loadCurrentModel()
+  window.addEventListener('app-model-config-changed', onModelConfigChanged)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('app-model-config-changed', onModelConfigChanged)
 })
 
 async function loadCurrentModel() {
@@ -25,6 +34,8 @@ async function loadCurrentModel() {
     } else if (config.provider.type === 'openai') {
       const provider = config.provider as any
       currentModel.value = `OpenAI (${provider.model_name})`
+    } else {
+      currentModel.value = t('modelIndicator.notConfigured')
     }
   } catch (error) {
     currentModel.value = t('modelIndicator.notConfigured')

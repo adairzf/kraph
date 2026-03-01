@@ -398,6 +398,7 @@ export default {
     errors: {
       noEntities: 'No entities detected, memory not saved.\nThis content cannot be structured — if it\'s a question, use the "Q&A" feature.',
       extractFailed: 'Entity extraction failed, memory not saved.\nIf this is a question, use the "Q&A" feature.\nReason: {reason}',
+      ollamaNotInitialized: 'Ollama is not initialized successfully. Please install and start Ollama first.',
     },
   },
   ollamaSetup: {

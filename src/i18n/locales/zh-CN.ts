@@ -398,6 +398,7 @@ export default {
     errors: {
       noEntities: '未检测到任何实体，记忆未保存。\n此内容无法结构化存储，如果是问句请使用「问答」功能查询。',
       extractFailed: '实体提取失败，记忆未保存。\n如果输入的是问句，请使用「问答」功能查询。\n原因: {reason}',
+      ollamaNotInitialized: 'Ollama 没有初始化成功，请先完成安装并启动服务。',
     },
   },
   ollamaSetup: {

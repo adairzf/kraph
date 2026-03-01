@@ -41,7 +41,7 @@ function toggleLocale() {
 
 type ThemeMode = 'dark' | 'light'
 const THEME_STORAGE_KEY = 'app-theme'
-const themeMode = ref<ThemeMode>('dark')
+const themeMode = ref<ThemeMode>('light')
 
 function applyTheme(theme: ThemeMode) {
   const root = document.documentElement
@@ -58,7 +58,7 @@ function initTheme() {
     applyTheme(saved)
     return
   }
-  applyTheme('dark')
+  applyTheme('light')
 }
 
 function toggleTheme() {
@@ -144,11 +144,14 @@ onMounted(async () => {
   if (!Number.isNaN(savedWidth) && savedWidth >= RIGHT_SIDEBAR_MIN) {
     rightSidebarWidth.value = Math.min(savedWidth, RIGHT_SIDEBAR_MAX)
   }
+
+  window.addEventListener('app-model-config-changed', refreshModelStatus)
 })
 
 onUnmounted(() => {
   stopResizeRight()
   document.removeEventListener('click', handleOutsideClick)
+  window.removeEventListener('app-model-config-changed', refreshModelStatus)
 })
 
 function handleOutsideClick(e: MouseEvent) {

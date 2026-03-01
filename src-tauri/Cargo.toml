@@ -1,6 +1,6 @@
 [package]
 name = "kraph"
-version = "0.3.0"
+version = "0.4.0"
 description = "A local-first personal knowledge graph app powered by LLMs"
 authors = ["you"]
 edition = "2021"

@@ -39,6 +39,7 @@ const speechSupported = ref(false)
 const voiceError = ref<string | null>(null)
 const whisperReady = ref(false)
 const whisperProgress = ref('')
+const voiceInputEntryEnabled = false // Temporary gate: hide voice input entry in UI.
 let whisperProgressTimer: number | null = null
 
 const text = ref(props.modelValue)
@@ -311,7 +312,7 @@ async function handleSave() {
     />
     <div class="actions">
       <button
-        v-if="speechSupported"
+        v-if="voiceInputEntryEnabled && speechSupported"
         type="button"
         class="btn voice"
         :class="{ active: recording }"

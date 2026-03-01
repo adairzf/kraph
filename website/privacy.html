@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Privacy Policy · Kraph</title>
+  <meta name="description" content="Kraph Privacy Policy — All your data stays on your device." />
+  <link rel="icon" type="image/png" href="logo_rounded.png" />
+  <link rel="apple-touch-icon" href="logo_rounded.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@400;500;700;800&family=Noto+Serif+SC:wght@400;500;700&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+
+    :root {
+      --bg: #f3efe6;
+      --paper: #fffdfa;
+      --ink: #15211d;
+      --muted: #55635c;
+      --line: rgba(21, 33, 29, 0.16);
+      --accent: #e56036;
+      --accent-2: #1a8f79;
+      --shadow-lg: 0 24px 60px rgba(21, 33, 29, 0.12);
+      --shadow-sm: 0 10px 24px rgba(21, 33, 29, 0.08);
+      --radius-xl: 26px;
+      --radius-lg: 18px;
+      --radius-md: 12px;
+    }
+
+    body {
+      font-family: 'Bricolage Grotesque', 'Noto Serif SC', sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(52vw 40vw at 110% -10%, rgba(13, 76, 143, 0.18), transparent 70%),
+        radial-gradient(52vw 35vw at -5% -20%, rgba(243, 186, 71, 0.24), transparent 68%),
+        var(--bg);
+      line-height: 1.58;
+      overflow-x: hidden;
+    }
+
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background-image:
+        linear-gradient(rgba(21, 33, 29, 0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(21, 33, 29, 0.03) 1px, transparent 1px);
+      background-size: 22px 22px;
+      mask-image: radial-gradient(circle at center, black 40%, transparent 95%);
+      z-index: -1;
+    }
+
+    .container { width: min(1160px, 92vw); margin: 0 auto; }
+
+    [data-animate] {
+      opacity: 0;
+      transform: translateY(18px);
+      animation: rise 0.75s cubic-bezier(.2,.7,.2,1) forwards;
+      animation-delay: var(--delay, 0s);
+    }
+
+    @keyframes rise {
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* Nav */
+    .nav {
+      position: sticky;
+      top: 0;
+      z-index: 30;
+      backdrop-filter: blur(9px);
+      background: rgba(243, 239, 230, 0.84);
+      border-bottom: 1px solid rgba(21, 33, 29, 0.1);
+    }
+
+    .nav-inner {
+      min-height: 74px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+    }
+
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+      text-decoration: none;
+      color: var(--ink);
+      font-weight: 800;
+      letter-spacing: 0.3px;
+    }
+
+    .brand img {
+      width: 36px;
+      height: 36px;
+      object-fit: cover;
+      border-radius: 10px;
+      border: 1px solid rgba(21, 33, 29, 0.12);
+    }
+
+    .lang-btn {
+      background: none;
+      border: 1.5px solid var(--line);
+      border-radius: 8px;
+      padding: 5px 14px;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--muted);
+      cursor: pointer;
+      font-family: inherit;
+      transition: border-color 0.2s, color 0.2s;
+    }
+
+    .lang-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+    /* Content */
+    .page {
+      padding: 80px 0 120px;
+    }
+
+    .page-header {
+      margin-bottom: 56px;
+    }
+
+    .page-label {
+      display: inline-block;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-bottom: 16px;
+    }
+
+    .page-title {
+      font-size: clamp(2rem, 4vw, 3rem);
+      font-weight: 800;
+      line-height: 1.15;
+      margin: 0 0 16px;
+    }
+
+    .page-subtitle {
+      font-size: 1.05rem;
+      color: var(--muted);
+      margin: 0;
+    }
+
+    .divider {
+      border: none;
+      border-top: 1px solid var(--line);
+      margin: 48px 0;
+    }
+
+    .card {
+      background: var(--paper);
+      border-radius: var(--radius-xl);
+      border: 1px solid rgba(21, 33, 29, 0.08);
+      box-shadow: var(--shadow-sm);
+      padding: 48px 56px;
+    }
+
+    @media (max-width: 600px) {
+      .card { padding: 32px 24px; }
+    }
+
+    .section-title {
+      font-size: 1.15rem;
+      font-weight: 800;
+      margin: 0 0 12px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .section-title::before {
+      content: '';
+      display: inline-block;
+      width: 4px;
+      height: 1.1em;
+      background: var(--accent);
+      border-radius: 2px;
+      flex-shrink: 0;
+    }
+
+    .section + .section { margin-top: 40px; }
+
+    p { margin: 0 0 12px; color: var(--muted); font-size: 0.97rem; }
+    p:last-child { margin-bottom: 0; }
+
+    .highlight {
+      background: rgba(229, 96, 54, 0.08);
+      border: 1px solid rgba(229, 96, 54, 0.2);
+      border-radius: var(--radius-md);
+      padding: 16px 20px;
+      color: var(--ink);
+      font-weight: 600;
+      font-size: 0.95rem;
+      margin-bottom: 0;
+    }
+
+    /* Footer */
+    footer {
+      border-top: 1px solid var(--line);
+      padding: 36px 0;
+    }
+
+    .footer-inner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    .footer-copy {
+      font-size: 13px;
+      color: var(--muted);
+      margin: 0;
+    }
+
+    .footer-links {
+      display: flex;
+      gap: 20px;
+    }
+
+    .footer-links a {
+      font-size: 13px;
+      color: var(--muted);
+      text-decoration: none;
+    }
+
+    .footer-links a:hover { color: var(--accent); }
+  </style>
+</head>
+<body>
+
+  <nav class="nav">
+    <div class="container">
+      <div class="nav-inner">
+        <a class="brand" href="index.html">
+          <img src="logo_rounded.png" alt="Kraph" />
+          Kraph
+        </a>
+        <button class="lang-btn" id="langBtn" onclick="toggleLang()">EN</button>
+      </div>
+    </div>
+  </nav>
+
+  <main class="page">
+    <div class="container">
+
+      <div class="page-header" data-animate>
+        <span class="page-label" data-i18n="label">隐私政策</span>
+        <h1 class="page-title" data-i18n="title">我们不收集你的任何数据</h1>
+        <p class="page-subtitle" data-i18n="subtitle">最后更新：2026 年 3 月 1 日 · Last updated: March 1, 2026</p>
+      </div>
+
+      <div class="card" data-animate style="--delay:.1s">
+
+        <div class="section">
+          <h2 class="section-title" data-i18n="s1_title">数据收集</h2>
+          <p class="highlight" data-i18n="s1_highlight">Kraph 不收集、不传输、不共享任何个人数据。</p>
+        </div>
+
+        <hr class="divider" />
+
+        <div class="section">
+          <h2 class="section-title" data-i18n="s2_title">本地存储</h2>
+          <p data-i18n="s2_p1">你在 Kraph 中创建的所有内容（记忆、笔记、关系图谱等）均存储在你的本地设备上。</p>
+          <p data-i18n="s2_p2">这些数据永远不会离开你的设备，也不会上传到任何服务器。</p>
+        </div>
+
+        <hr class="divider" />
+
+        <div class="section">
+          <h2 class="section-title" data-i18n="s3_title">网络请求</h2>
+          <p data-i18n="s3_p1">Kraph 支持连接本地运行的 AI 服务（如 Ollama），所有请求均在你的本地网络内完成，不经过任何第三方服务器。</p>
+        </div>
+
+        <hr class="divider" />
+
+        <div class="section">
+          <h2 class="section-title" data-i18n="s4_title">第三方服务</h2>
+          <p data-i18n="s4_p1">Kraph 不集成任何第三方分析、广告或追踪服务。</p>
+        </div>
+
+        <hr class="divider" />
+
+        <div class="section">
+          <h2 class="section-title" data-i18n="s5_title">联系我们</h2>
+          <p data-i18n="s5_p1">如有任何隐私相关问题，请通过以下方式联系：</p>
+          <p><a href="mailto:2011865807@qq.com" style="color:var(--accent);font-weight:600;">2011865807@qq.com</a></p>
+        </div>
+
+      </div>
+
+    </div>
+  </main>
+
+  <footer>
+    <div class="container">
+      <div class="footer-inner">
+        <p class="footer-copy" data-i18n="footer_copy">© 2026 Kraph. All rights reserved.</p>
+        <div class="footer-links">
+          <a href="index.html" data-i18n="footer_home">首页</a>
+        </div>
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    const i18n = {
+      zh: {
+        label: '隐私政策',
+        title: '我们不收集你的任何数据',
+        subtitle: '最后更新：2026 年 3 月 1 日',
+        s1_title: '数据收集',
+        s1_highlight: 'Kraph 不收集、不传输、不共享任何个人数据。',
+        s2_title: '本地存储',
+        s2_p1: '你在 Kraph 中创建的所有内容（记忆、笔记、关系图谱等）均存储在你的本地设备上。',
+        s2_p2: '这些数据永远不会离开你的设备，也不会上传到任何服务器。',
+        s3_title: '网络请求',
+        s3_p1: 'Kraph 支持连接本地运行的 AI 服务（如 Ollama），所有请求均在你的本地网络内完成，不经过任何第三方服务器。',
+        s4_title: '第三方服务',
+        s4_p1: 'Kraph 不集成任何第三方分析、广告或追踪服务。',
+        s5_title: '联系我们',
+        s5_p1: '如有任何隐私相关问题，请通过以下方式联系：',
+        footer_copy: '© 2026 Kraph. All rights reserved.',
+        footer_home: '首页',
+        langBtn: 'EN',
+      },
+      en: {
+        label: 'Privacy Policy',
+        title: 'We collect zero data from you',
+        subtitle: 'Last updated: March 1, 2026',
+        s1_title: 'Data Collection',
+        s1_highlight: 'Kraph does not collect, transmit, or share any personal data.',
+        s2_title: 'Local Storage',
+        s2_p1: 'All content you create in Kraph (memories, notes, knowledge graphs, etc.) is stored locally on your device.',
+        s2_p2: 'This data never leaves your device and is never uploaded to any server.',
+        s3_title: 'Network Requests',
+        s3_p1: 'Kraph supports connecting to locally running AI services (such as Ollama). All requests are made within your local network and never pass through any third-party servers.',
+        s4_title: 'Third-Party Services',
+        s4_p1: 'Kraph does not integrate any third-party analytics, advertising, or tracking services.',
+        s5_title: 'Contact Us',
+        s5_p1: 'If you have any privacy-related questions, please contact us at:',
+        footer_copy: '© 2026 Kraph. All rights reserved.',
+        footer_home: 'Home',
+        langBtn: '中文',
+      }
+    }
+
+    let currentLang = localStorage.getItem('lang') || 'zh'
+
+    function applyLang() {
+      document.querySelectorAll('[data-i18n]').forEach(el => {
+        const key = el.getAttribute('data-i18n')
+        if (i18n[currentLang]?.[key]) el.textContent = i18n[currentLang][key]
+      })
+      document.getElementById('langBtn').textContent = currentLang === 'zh' ? 'EN' : '中文'
+      document.documentElement.lang = currentLang === 'zh' ? 'zh-CN' : 'en'
+    }
+
+    function toggleLang() {
+      currentLang = currentLang === 'zh' ? 'en' : 'zh'
+      localStorage.setItem('lang', currentLang)
+      applyLang()
+    }
+
+    applyLang()
+  </script>
+
+</body>
+</html>

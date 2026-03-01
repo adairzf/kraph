@@ -26,7 +26,10 @@
     "targets": "all",
     "macOS": {
       "infoPlist": "Info.plist",
-      "minimumSystemVersion": "10.15"
+      "minimumSystemVersion": "10.15",
+      "entitlements": "./Entitlements.plist",
+      "signingIdentity": "Apple Distribution: zhoufeng dai (4J7V324U38)",
+      "providerShortName": "4J7V324U38"
     },
     "windows": {
       "wix": {},

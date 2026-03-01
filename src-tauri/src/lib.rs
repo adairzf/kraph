@@ -27,6 +27,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::time::Instant;
 use tauri::{Emitter, Manager, State};
 use whisper::{setup_whisper as setup_whisper_runtime, transcribe_audio_with_whisper};
 
@@ -1115,16 +1116,7 @@ fn do_save_memory(
         serde_json::json!({}),
     );
     println!("🔍 [Step 1] Starting entity extraction...");
-    let quick_extracted: Option<ExtractedData> = if content.trim().len() > 5 {
-        if let ModelProvider::Ollama {
-            base_url,
-            extract_model_name,
-            ..
-        } = &config.provider
-        {
-            let _ = ensure_ollama_running(base_url);
-            let _ = ensure_model_available(base_url, extract_model_name);
-        }
+    let quick_extracted: Option<ExtractedData> = if !content.trim().is_empty() {
         match call_model_extract(&config, ENTITY_EXTRACT_PROMPT, &content) {
             Ok(extracted) if extracted.entities.is_empty() => {
                 println!("❌ [Step 1] Extraction returned 0 entities, aborting save");
@@ -1204,6 +1196,7 @@ fn do_save_memory(
     };
 
     // Step 3: Knowledge fusion (only when historical memories exist)
+    let step3_started = Instant::now();
     let fused = if !historical_memories.is_empty() && content.trim().len() > 5 {
         emit_save_progress(
             &app,
@@ -1211,22 +1204,23 @@ fn do_save_memory(
             "running",
             serde_json::json!({}),
         );
-        println!("🧠 [Step 3] Starting knowledge fusion...");
-        if let ModelProvider::Ollama {
-            base_url,
-            model_name,
-            ..
-        } = &config.provider
-        {
-            let _ = ensure_model_available(base_url, model_name);
-        }
-        call_model_fusion(
+        println!(
+            "🧠 [Step 3] Starting knowledge fusion (historical_memories={}, new_content_chars={})",
+            historical_memories.len(),
+            content.chars().count()
+        );
+        let fusion_call_started = Instant::now();
+        let fusion_result = call_model_fusion(
             &config,
             KNOWLEDGE_FUSION_PROMPT,
             &historical_memories,
             &content,
-        )
-        .map_err(|e| {
+        );
+        println!(
+            "⏱️ [Step 3] call_model_fusion returned in {} ms",
+            fusion_call_started.elapsed().as_millis()
+        );
+        fusion_result.map_err(|e| {
             emit_save_progress(
                 &app,
                 "saveProgress.step3.fusionFailed",
@@ -1247,6 +1241,10 @@ fn do_save_memory(
         println!("⏭️ [Step 3] Skipping knowledge fusion (no historical memories)");
         None
     };
+    println!(
+        "⏱️ [Step 3] Total stage time: {} ms",
+        step3_started.elapsed().as_millis()
+    );
 
     let (mut entities, mut relations, aliases) = if let Some(fused_data) = fused {
         emit_save_progress(
@@ -1291,11 +1289,22 @@ fn do_save_memory(
     };
 
     if is_time_normalization_enabled_for_active_library(&app) {
+        let normalize_started = Instant::now();
+        let time_entities_before = entities
+            .iter()
+            .filter(|x| x.entity_type.eq_ignore_ascii_case("Time"))
+            .count();
         normalize_time_entities_in_place(
             &mut entities,
             &mut relations,
             &config,
             Local::now().date_naive(),
+        );
+        println!(
+            "⏱️ [Step 3.5] Time normalization took {} ms (time_entities_before={}, total_entities={})",
+            normalize_started.elapsed().as_millis(),
+            time_entities_before,
+            entities.len()
         );
     }
 
@@ -1535,16 +1544,7 @@ fn do_update_memory(
         serde_json::json!({}),
     );
     println!("🔍 Starting entity extraction...");
-    let quick_extracted = if content.trim().len() > 5 {
-        if let ModelProvider::Ollama {
-            base_url,
-            extract_model_name,
-            ..
-        } = &config.provider
-        {
-            let _ = ensure_ollama_running(base_url);
-            let _ = ensure_model_available(base_url, extract_model_name);
-        }
+    let quick_extracted = if !content.trim().is_empty() {
         match call_model_extract(&config, ENTITY_EXTRACT_PROMPT, &content) {
             Ok(extracted) if extracted.entities.is_empty() => {
                 println!("❌ [Step 1] Extraction returned 0 entities, aborting update");
@@ -1620,6 +1620,7 @@ fn do_update_memory(
     };
 
     // Step 3: Knowledge fusion
+    let step3_started = Instant::now();
     let fused = if !historical_memories.is_empty() && content.trim().len() > 5 {
         emit_save_progress(
             &app,
@@ -1627,22 +1628,25 @@ fn do_update_memory(
             "running",
             serde_json::json!({}),
         );
-        println!("🧠 Running knowledge fusion...");
-        if let ModelProvider::Ollama {
-            base_url,
-            model_name,
-            ..
-        } = &config.provider
-        {
-            let _ = ensure_model_available(base_url, model_name);
-        }
-        call_model_fusion(
+        println!(
+            "🧠 [Step 3][update_memory:{}] Starting knowledge fusion (historical_memories={}, new_content_chars={})",
+            memory_id,
+            historical_memories.len(),
+            content.chars().count()
+        );
+        let fusion_call_started = Instant::now();
+        let fusion_result = call_model_fusion(
             &config,
             KNOWLEDGE_FUSION_PROMPT,
             &historical_memories,
             &content,
-        )
-        .ok()
+        );
+        println!(
+            "⏱️ [Step 3][update_memory:{}] call_model_fusion returned in {} ms",
+            memory_id,
+            fusion_call_started.elapsed().as_millis()
+        );
+        fusion_result.ok()
     } else {
         emit_save_progress(
             &app,
@@ -1652,6 +1656,11 @@ fn do_update_memory(
         );
         None
     };
+    println!(
+        "⏱️ [Step 3][update_memory:{}] Total stage time: {} ms",
+        memory_id,
+        step3_started.elapsed().as_millis()
+    );
 
     let (mut entities, mut relations, aliases) = if let Some(fused_data) = fused {
         emit_save_progress(
@@ -1686,11 +1695,23 @@ fn do_update_memory(
     };
 
     if is_time_normalization_enabled_for_active_library(&app) {
+        let normalize_started = Instant::now();
+        let time_entities_before = entities
+            .iter()
+            .filter(|x| x.entity_type.eq_ignore_ascii_case("Time"))
+            .count();
         normalize_time_entities_in_place(
             &mut entities,
             &mut relations,
             &config,
             Local::now().date_naive(),
+        );
+        println!(
+            "⏱️ [Step 3.5][update_memory:{}] Time normalization took {} ms (time_entities_before={}, total_entities={})",
+            memory_id,
+            normalize_started.elapsed().as_millis(),
+            time_entities_before,
+            entities.len()
         );
     }
 
@@ -2530,9 +2551,19 @@ fn do_answer_question(
         return Ok("No relevant memories found. Please record some content first.".to_string());
     }
 
+    // Keep memory ordering explicit for conflict resolution:
+    // entries are rendered from newest to oldest with timestamps.
     let context: String = memories
         .iter()
-        .map(|m| format!("- {}", m.content.trim()))
+        .enumerate()
+        .map(|(idx, m)| {
+            format!(
+                "- [{}] {} | {}",
+                idx + 1,
+                m.created_at.trim(),
+                m.content.trim()
+            )
+        })
         .collect::<Vec<_>>()
         .join("\n");
 

@@ -78,6 +78,7 @@ async function handleSave() {
     
     await updateModelConfig(newConfig)
     config.value = newConfig
+    window.dispatchEvent(new CustomEvent('app-model-config-changed', { detail: { provider: newConfig.provider.type } }))
     ElMessage.success(t('modelSettings.messages.saved'))
   } catch (error) {
     ElMessage.error(t('modelSettings.messages.saveFailed') + String(error))
