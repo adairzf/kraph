@@ -22,3 +22,13 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Rust / Tauri 编译产物
+src-tauri/target/
+src-tauri/gen/
+
+# Apple 签名相关（不要提交到仓库）
+*.provisionprofile
+*.mobileprovision
+*.p12
+*.cer
